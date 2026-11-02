@@ -1,5 +1,6 @@
 """AutoMix — ventana principal de AutoMix (la arman las partes ventana_*.py)."""
 import sys
+import threading
 import time
 import numpy as np
 import sounddevice as sd
@@ -11,7 +12,7 @@ from setup.analisis import _cerrar_pool
 from setup.barra import BarraProgresoConMarca
 from setup.base import CONSOLA, log
 from setup.biblioteca import Biblioteca
-from setup import cruce_auto
+from setup import almacen, cruce_auto
 from setup.config import DEF_AGUDOS, DEF_GOLPE, DEF_MARCA, DEF_MB_INT, DEF_MB_LIM, DEF_MB_VEL, DEF_MEDIOS, DEF_VOLUMEN, DEF_ZOOM, DEF_PUNTO_A, DEF_PUNTO_B, DEF_PUNTO_S, DEF_RAMPA_B, DEF_FIN_A, DEF_GAMMA_A, guardar_config, leer_config
 from setup.danados import HistorialDanados
 from setup.deck import Deck
@@ -42,6 +43,7 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         except Exception:
             import traceback; traceback.print_exc()
         cfg = leer_config()
+        self._modo_orden = cfg.get("lib_orden", "bpm")             # 'estilo' = la lista quedó ordenada por 🎵 Ordenar por estilo: no se reordena sola
         from setup.ajustes_cruce import cargar as _cargar_ajustes_cruce
         _cargar_ajustes_cruce()                                   # tiempos del cruce guardados (⚙ Ajustes)
         self.punto_a = float(cfg.get("punto_a", DEF_PUNTO_A))
@@ -109,6 +111,7 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         lib_lay.addWidget(self.biblioteca, stretch=1)
         lib_btns = QHBoxLayout()
         b_limpiar = QPushButton("Vaciar"); b_limpiar.clicked.connect(self.biblioteca.limpiar)
+        b_limpiar.setStyleSheet("QPushButton { border:1px solid #ff4d4d; border-radius:9px; } QPushButton:hover { border:1px solid #ff8585; border-radius:9px; }")      # contorno rojo (como el amarillo de «Por carpetas»)
         self.btn_ordenar = QPushButton("🔃 Ordenar por BPM")
         self.btn_ordenar.clicked.connect(self._ordenar_biblioteca_bpm)
         self.btn_reanalizar = QPushButton("🔄 Re-analizar")
@@ -145,6 +148,19 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         fila_orden = QHBoxLayout(); fila_orden.addWidget(self.btn_random); fila_orden.addWidget(self.btn_agrupar); fila_orden.addWidget(self.btn_danados)
         fila_orden.addWidget(self.btn_estadisticas)
         lib_lay.addLayout(fila_orden)
+        self.btn_estilo = QPushButton("🎵 Ordenar por estilo")
+        self.btn_estilo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_estilo.setToolTip("Ordena la lista del tema más parecido al menos parecido (tempo, energía, voz, bajo, bombo), sin carpetas.\n"
+                                   "Parte del tema que suena (o del que tengas elegido) y en cada paso sigue el más parecido.\n"
+                                   "Usa lo que ya analizó AutoMix; la primera vez con muchos temas puede tardar un poco.")
+        self.btn_estilo.clicked.connect(self._ordenar_por_estilo)
+        self.btn_destildar = QPushButton("⬜ Destildar todos")
+        self.btn_destildar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_destildar.setToolTip("Los temas que ya sonaron (más del 50 %) se tildan solos para que no se repitan.\n"
+                                      "Este botón los destilda a todos. Los que tildaste a mano no se tocan.")
+        self.btn_destildar.clicked.connect(self._destildar_tocados)
+        fila_estilo = QHBoxLayout(); fila_estilo.addWidget(self.btn_estilo); fila_estilo.addWidget(self.btn_destildar)
+        lib_lay.addLayout(fila_estilo)
         # 🎼 Armónico y 🥁 En frase se quitaron de la pantalla: quedan siempre apagados
         # (el siguiente tema es el que sigue en la lista, ordenada por BPM, y la mezcla automática arranca al llegar a la marca).
         self.chk_armonico = _OpcionApagada()
@@ -464,6 +480,7 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         self.biblioteca.primera_tanda.connect(self._restaurar_decks)                 # los decks guardados vuelven apenas hay temas en la lista
         self.biblioteca.carga_progreso.connect(lambda h, n: self.lbl_lib.setText(f"📁 Cargando biblioteca… {h}/{n}") if h < n else None)
         self.biblioteca.carga_terminada.connect(self._post_carga_biblioteca)
+        self.biblioteca.lista_cargada.connect(self._plegar_al_inicio)
         self.biblioteca.cargar()                                                     # (en tandas: la ventana se abre enseguida)
         self.btn_agrupar.setChecked(True); self.biblioteca.set_agrupado(True)      # siempre se arranca en vista por carpetas (y plegadas: ver _post_carga_biblioteca)
         self._update_cf()
@@ -546,16 +563,39 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         d.pos_manual = True                          # lo ubicó el usuario: si es el que entra, la mezcla arranca desde ahí
         self._set_status(f"✋ Deck {deck} movido a {fmt_time(anchor)}")
 
+    def _plegar_al_inicio(self):
+        """Al abrir el programa las carpetas arrancan contraídas (una sola vez)."""
+        if getattr(self, "_plegado_inicial", False) or not self.biblioteca.agrupado:
+            return
+        if not self.biblioteca.count() or not self.biblioteca._es_cab(self.biblioteca.item(0)):
+            return
+        self._plegado_inicial = True
+        self.biblioteca.plegar_todas()
+        self.btn_plegar.setText(">>")
+        self.btn_plegar.setToolTip("Expandir todas las carpetas")
+
+    def _compactar_analisis_viejos(self):
+        """Una sola vez por sesión, en segundo plano y despacio: pasa los análisis viejos (sin comprimir) al almacén nuevo."""
+        if getattr(self, "_compactando", False):
+            return
+        self._compactando = True
+        rutas = list(self.biblioteca.todas())
+        self._cancelar_compactar = False
+        def _trabajo():
+            try:
+                from setup import hilos_analisis as _ha
+                almacen.compactar_legado(rutas, cancelar=lambda: self._cancelar_compactar, en_pausa=lambda: bool(_ha._SONANDO))
+            except Exception:
+                import traceback; log("programa", "compactar análisis: " + traceback.format_exc())
+        threading.Thread(target=_trabajo, daemon=True, name="compactar-analisis").start()
+
     def _post_carga_biblioteca(self):
         """La lista ya está completa y con BPM / tono: si está en vista por carpetas se ordena como siempre."""
+        self._compactar_analisis_viejos()
         try:
             if self.biblioteca.agrupado:
                 self._ordenar_lista()
-                if not getattr(self, "_plegado_inicial", False):         # al abrir el programa las carpetas arrancan contraídas (una sola vez)
-                    self._plegado_inicial = True
-                    self.biblioteca.plegar_todas()
-                    self.btn_plegar.setText(">>")
-                    self.btn_plegar.setToolTip("Expandir todas las carpetas")
+                self._plegar_al_inicio()
         except Exception:
             import traceback; traceback.print_exc()
 
@@ -567,6 +607,7 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         except Exception: pass
         try: self.flechas_slider.quitar()
         except Exception: pass
+        self._cancelar_compactar = True                  # el compactador se detiene (cada archivo se escribe completo o no se escribe)
         try:
             if self.mixer.grabador.activo:
                 self._parar_grabacion()          # que el .wav quede completo

@@ -5,7 +5,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtCore import Qt
 from setup.base import _log_diferido
 from setup.config import DEF_AGUDOS, DEF_GOLPE, DEF_MAN_COMP, DEF_MAN_RATIO, DEF_MAN_UMBRAL, DEF_MARCA, DEF_MB_INT, DEF_MB_LIM, DEF_MB_VEL, DEF_MEDIOS, DEF_VOLUMEN, DEF_ZOOM, guardar_config, leer_config
-from setup.teclas import TeclaGlobalF2, TeclasGlobalesVolumen
+from setup.teclas import FlechasSobreSlider, TeclaGlobalF2, TeclasGlobalesVolumen
 from setup.tema import TEMA
 from setup.widgets import EtiquetaAncha, EtiquetaElidida, BotonConfig, VuMeter, qss_marco
 
@@ -164,6 +164,7 @@ class MultibandaMixin:
         self.chk_f2g.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.f2_global = TeclaGlobalF2(self._mix_clicked)
         self.vol_global = TeclasGlobalesVolumen(self._vol_tecla)
+        self.flechas_slider = FlechasSobreSlider(); self.flechas_slider.instalar()      # ← / → mueven el slider que esté bajo el mouse
         if sys.platform != "win32":
             self.chk_f2g.setVisible(False)
         self.chk_f2g.setChecked(bool(leer_config().get("f2_global", True)))

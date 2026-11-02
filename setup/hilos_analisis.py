@@ -7,6 +7,7 @@ import time
 from collections import deque
 from PySide6.QtCore import QThread, Signal
 from setup.analisis import BPM_MAX, BPM_MIN, _guardar_cache, _limpiar_grilla_cache, _pista_bpm, analizar_archivo
+from setup import almacen
 from setup.base import CACHE_DIR
 
 
@@ -45,10 +46,10 @@ class Analyzer(QThread):
 
     def _run(self):
         try:
-            cache_key = CACHE_DIR / (Path(self.path).stem + ".json")
-            if cache_key.exists():
-                with open(cache_key) as f:
-                    data = json.load(f)
+            cache_key = almacen.ruta_cache(self.path)             # dónde se guarda (formato nuevo, comprimido)
+            hallado = almacen.buscar(self.path)                   # el análisis del tema, nuevo o viejo
+            if hallado is not None:
+                data = almacen.leer(hallado)
                 hint = _pista_bpm(self.path)
                 dudoso = (data.get("ver", 1) < 3 and hint is not None
                           and abs(float(data.get("bpm", 0)) - hint) / hint > 0.06)
@@ -221,11 +222,11 @@ class AnalizadorBiblioteca(QThread):
     def _tarea(self, ruta):
         """Qué hay que hacer con este tema: 'full' (análisis completo), 'clave' (completar tonalidad/voz) o None (ya está).
         Devuelve (tarea, cache_key)."""
-        cache_key = CACHE_DIR / (Path(ruta).stem + ".json")
-        if self.forzar or not cache_key.exists():
+        cache_key = almacen.ruta_cache(ruta)
+        hallado = almacen.buscar(ruta)
+        if self.forzar or hallado is None:
             return "full", cache_key
-        with open(cache_key, encoding="utf-8") as f:
-            data = json.load(f)
+        data = almacen.leer(hallado)
         if "key" not in data or "voz" not in data:
             return "clave", cache_key
         return None, cache_key
@@ -260,8 +261,7 @@ class AnalizadorBiblioteca(QThread):
                 _guardar_cache(key, res)
                 print(f"Analizado: {os.path.basename(ruta)} -> {res['bpm']:.1f} BPM, clave {(res.get('key') or {}).get('camelot') or '?'}")
             else:
-                with open(key, encoding="utf-8") as f:
-                    data = json.load(f)
+                data = almacen.leer(almacen.buscar(ruta) or key)
                 data.update(res)
                 _guardar_cache(key, data)
             self._hechos.add(ruta)
@@ -362,8 +362,7 @@ class AnalizadorBiblioteca(QThread):
                         k = (res.get("key") or {}).get("camelot")
                         print(f"Analizado: {os.path.basename(ruta)} -> {res['bpm']:.1f} BPM, clave {k or '?'}")
                     else:
-                        with open(key, encoding="utf-8") as f:
-                            data = json.load(f)
+                        data = almacen.leer(almacen.buscar(ruta) or key)
                         data.update(res)
                         _guardar_cache(key, data)
                         print(f"Clave y voz: {os.path.basename(ruta)} -> {(data.get('key') or {}).get('camelot') or '?'}")
@@ -406,8 +405,9 @@ class AnalizadorBiblioteca(QThread):
             while _PRIORITARIOS > 0 and not self.cancelar:      # un deck está esperando su análisis: pasa primero
                 time.sleep(0.2)
             try:
-                cache_key = CACHE_DIR / (Path(ruta).stem + ".json")
-                if self.forzar or not cache_key.exists():
+                cache_key = almacen.ruta_cache(ruta)
+                hallado = almacen.buscar(ruta)
+                if self.forzar or hallado is None:
                     t0 = time.monotonic()
                     result = analizar_archivo(ruta)
                     _guardar_cache(cache_key, result)
@@ -416,8 +416,7 @@ class AnalizadorBiblioteca(QThread):
                     if time.monotonic() - t0 > 60.0:
                         print(f"[análisis] ese tema tardó {time.monotonic() - t0:.0f} s")
                 else:                                   # análisis viejo sin tonalidad: se completa solo la clave
-                    with open(cache_key, encoding="utf-8") as f:
-                        data = json.load(f)
+                    data = almacen.leer(hallado)
                     if "key" not in data or "voz" not in data:
                         data.update(analizar_archivo(ruta, solo_clave=True))
                         _guardar_cache(cache_key, data)

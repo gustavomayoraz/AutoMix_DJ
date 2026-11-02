@@ -15,7 +15,7 @@ from PySide6.QtCore import QEventLoop, QMimeData, QTimer, QUrl, Qt, Signal
 from setup.ajustes import FUENTE_BOOST, SUPPORTED
 from setup.analisis import compat_armonica
 from setup.base import CACHE_DIR, log
-from setup import indice
+from setup import almacen, indice
 from setup.estadisticas import EST
 from setup.tema import COLOR_DECK_A, COLOR_DECK_B, TEMA
 
@@ -115,9 +115,14 @@ def _clave_memo(p):
     return os.path.normcase(os.path.abspath(p))
 
 
-@functools.lru_cache(maxsize=100000)
 def _stem_memo(ruta):
-    """Nombre del tema sin extensión: es el nombre de su .json en la caché y su clave en el índice."""
+    """Identidad del tema (nombre + tamaño): es el nombre de su análisis en el almacén y su clave en el índice.
+    (El nombre de la función quedó de cuando la clave era solo el nombre del archivo.)"""
+    return almacen.clave(ruta)
+
+
+def _stem_viejo(ruta):
+    """La clave de antes (solo el nombre del archivo): los análisis viejos todavía están en el índice con esa clave."""
     return Path(ruta).stem
 
 
@@ -130,9 +135,12 @@ class Biblioteca(QListWidget):
     aviso = Signal(str)        # mensaje para la barra de estado (p. ej. duplicados omitidos)
     cambio = Signal()
     cambio_estadisticas = Signal()        # se marcó o quitó un 👍 desde la lista
+    estilo_listo = Signal(object)         # el hilo del orden por estilo terminó: (rutas en orden, cuántas con análisis) o el error
+    estilo_progreso = Signal(int, int)    # (temas leídos, total) mientras el hilo lee los análisis
     nuevos = Signal()          # se agregaron temas: hay que analizarlos
     carga_progreso = Signal(int, int)     # al abrir: (temas revisados, total) mientras la lista se va llenando
     primera_tanda = Signal()              # ya hay temas en la lista (los decks guardados pueden volver a cargarse)
+    lista_cargada = Signal()              # todos los temas ya están en la lista (todavía sin BPM / tono)
     carga_terminada = Signal()            # lista completa y con BPM / tonos leídos
     _precarga_lista = Signal()
     ROL_NOMBRE = Qt.ItemDataRole.UserRole + 1
@@ -171,6 +179,7 @@ class Biblioteca(QListWidget):
         self._memo_dur = {}        # ruta -> duración en segundos (del análisis)
         self._memo_voz = {}        # ruta -> True si el análisis ya trae las curvas de voz/bajo
         self._skips = {}           # ruta (normalizada) -> True si está SALTEADO (no se carga solo al mezclar)
+        self._tocados = set()      # temas tildados SOLOS por haber sonado más del 50 % (el botón «Destildar todos» saca solo estos)
         self._carga = None         # carga inicial en tandas (None = no hay ninguna en curso)
         self._cargando_lib = False # True mientras se carga la lista guardada: no se guarda (la lista está incompleta)
         self._precarga_lista.connect(self._fin_precarga)
@@ -200,8 +209,78 @@ class Biblioteca(QListWidget):
         if self._skips.get(k, False) == skip:
             return                                   # nada cambió (por ejemplo, disparó por setText/setData)
         self._skips[k] = skip
+        if not skip:
+            self._tocados.discard(k)                 # lo destildaron a mano: ya no cuenta como "tocado"
         self._refrescar_textos()
         self.guardar()
+        self.cambio.emit()
+
+    def marcar_tocado(self, ruta):
+        """El tema sonó más del 50 %: queda tildado (salteado) para que la carga automática no lo repita. Un tema que ya estaba
+        tildado (a mano) se deja como está. Devuelve True si lo tildó."""
+        k = self._clave(ruta)
+        if self._skips.get(k, False):
+            return False
+        for i in range(self.count()):
+            it = self.item(i)
+            if not self._es_cab(it) and self._clave(it.data(Qt.ItemDataRole.UserRole)) == k:
+                self._tocados.add(k)
+                it.setCheckState(Qt.CheckState.Checked)      # dispara _on_item_changed: lo anota, actualiza el texto y guarda
+                return True
+        return False
+
+    def destildar_tocados(self):
+        """Destilda los temas que se tildaron solos por haber sonado. Los que se tildaron a mano no se tocan.
+        Devuelve (cuántos destildó, cuántos tildados a mano quedan)."""
+        if not self._tocados:
+            return 0, sum(1 for v in self._skips.values() if v)
+        prev = self._cargando
+        self._cargando = True
+        n = 0
+        try:
+            for i in range(self.count()):
+                it = self.item(i)
+                if self._es_cab(it):
+                    continue
+                k = self._clave(it.data(Qt.ItemDataRole.UserRole))
+                if k in self._tocados:
+                    it.setCheckState(Qt.CheckState.Unchecked)
+                    self._skips[k] = False
+                    n += 1
+        finally:
+            self._cargando = prev
+        self._tocados.clear()
+        self._refrescar_textos()
+        self.guardar()
+        self.cambio.emit()
+        return n, sum(1 for v in self._skips.values() if v)
+
+    def aplicar_orden(self, rutas):
+        """Pone los temas en el orden de `rutas` (los que no estén en esa lista quedan al final, como estaban). Para la lista plana."""
+        pos = {self._clave(r): i for i, r in enumerate(rutas)}
+        n = self.count()
+        sel = {self._clave(it.data(Qt.ItemDataRole.UserRole)) for it in self.selectedItems() if not self._es_cab(it)}
+        items = [self.item(i) for i in range(n)]
+        items = [it for it in items if not self._es_cab(it)]
+        orden = sorted(items, key=lambda it: pos.get(self._clave(it.data(Qt.ItemDataRole.UserRole)), len(pos)))
+        if [id(x) for x in orden] == [id(self.item(i)) for i in range(self.count())]:
+            return
+        prev = self._cargando
+        self._cargando = True
+        self.setUpdatesEnabled(False)
+        try:
+            self._sacar_todos()
+            for it in orden:
+                self._bomba()
+                self.addItem(it)
+                if self._clave(it.data(Qt.ItemDataRole.UserRole)) in sel:
+                    it.setSelected(True)
+        finally:
+            self.setUpdatesEnabled(True)
+            self._cargando = prev
+        self.verticalScrollBar().setValue(0)
+        if getattr(self, "_ult_pintado", None):
+            self.pintar(*self._ult_pintado)
         self.cambio.emit()
 
     @staticmethod
@@ -288,6 +367,20 @@ class Biblioteca(QListWidget):
                         self.setRowHidden(self.count() - 1, True)
         finally:
             self._cargando = prev
+
+    def _agregar_cab(self, carpeta, orig, total):
+        """Encabezado de carpeta al final de la lista (se usa mientras se carga la lista guardada: así las carpetas se ven desde el primer momento)."""
+        cab = QListWidgetItem()
+        cab.setData(self.ROL_CAB, True)
+        cab.setData(Qt.ItemDataRole.UserRole, carpeta)
+        cab.setData(self.ROL_CARPETA_ORIG, orig)
+        cab.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
+        f = QFont(self.font()); f.setBold(True); cab.setFont(f)
+        cab.setBackground(QBrush(QColor("#17566a"))); cab.setForeground(QBrush(QColor("#d8f6ff")))
+        self.addItem(cab)
+        cab.setText(self._texto_cab(carpeta, carpeta in self._plegadas, 0, total))
+        cab.setData(Qt.ItemDataRole.UserRole + 3, f"{total}")
+        cab.setToolTip(f"{orig}\n\nArrastrá este título para copiar TODA la carpeta afuera (a otra carpeta o al Escritorio).\nClic: abrir / cerrar.\nClic derecho (o Supr): quitar la carpeta de la lista (no borra archivos).")
 
     @staticmethod
     def _texto_cab(carpeta, cerrada, n_esperando, total=0):
@@ -489,19 +582,19 @@ class Biblioteca(QListWidget):
         """Los temas recién analizados en este programa: se vuelve a leer su fila del índice (de una consulta por tandas)."""
         if self._idx is None or not self._idx_ok:
             return
-        stems = {_stem_memo(r) for r in rutas}
+        por_st = {_stem_memo(r): r for r in rutas}
+        stems = set(por_st)
         try:
             self._idx.update(indice.por_temas(stems))
         except Exception as e:
             log("índice", f"no se pudo actualizar desde el índice: {e}")
-        for st in stems:                                     # recién analizado pero sin fila en la base (base ilegible, pendrive…): se lee su .json
+        for st, r in por_st.items():                         # recién analizado pero sin fila en la base (base ilegible, pendrive…): se lee su análisis
             if st in self._idx and self._idx[st][0] is not None and self._idx[st][3]:
                 continue
-            cache = CACHE_DIR / (st + ".json")
             try:
-                if cache.exists():
-                    with open(cache, encoding="utf-8") as f:
-                        d = json.load(f)
+                hallado = almacen.buscar(r)
+                if hallado is not None:
+                    d = almacen.leer(hallado)
                     if isinstance(d, dict) and "bpm" in d:
                         self._lote_idx.append(indice.fila_de(st, d))
             except Exception:
@@ -517,6 +610,8 @@ class Biblioteca(QListWidget):
                 self._cargar_idx()
             if self._idx_ok:
                 fila = self._idx.get(_stem_memo(ruta))
+                if fila is None:
+                    fila = self._idx.get(_stem_viejo(ruta))   # análisis viejo (todavía con la clave de solo el nombre)
                 if fila is not None:                          # lo normal: viene del índice, sin tocar el disco
                     v = self._poner_memo(k, fila)
                     return v
@@ -526,10 +621,9 @@ class Biblioteca(QListWidget):
                     return v
             bpm = cam = nom = None; hay = False; fr = False; hv = False
             try:
-                cache = CACHE_DIR / (Path(ruta).stem + ".json")
-                if cache.exists():
-                    with open(cache, encoding="utf-8") as f:
-                        d = json.load(f)
+                cache = almacen.buscar(ruta)
+                if cache is not None:
+                    d = almacen.leer(cache)
                     b = d.get("bpm"); bpm = float(b) if b is not None else None
                     fr = len(d.get("downbeats_full") or d.get("downbeats") or []) >= 9 and d.get("grid") != 0
                     hv = "voz" in d
@@ -956,7 +1050,7 @@ class Biblioteca(QListWidget):
         idx = self._idx
         n = 0
         for r in self.todas():
-            fila = idx.get(_stem_memo(r))
+            fila = idx.get(_stem_memo(r)) or idx.get(_stem_viejo(r))
             if fila is not None and fila[0] is not None and fila[3] and fila[5]:
                 n += 1
         return n
@@ -999,7 +1093,7 @@ class Biblioteca(QListWidget):
             return
         try:
             BIBLIOTECA_JSON.parent.mkdir(exist_ok=True)
-            datos = [{"ruta": r, "skip": self.esta_salteado(r)} for r in self.todas()]
+            datos = [{"ruta": r, "skip": self.esta_salteado(r), **({"toc": True} if self._clave(r) in self._tocados else {})} for r in self.todas()]
             BIBLIOTECA_JSON.write_text(json.dumps(datos, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             print("No se pudo guardar la biblioteca:", e)
@@ -1013,6 +1107,7 @@ class Biblioteca(QListWidget):
             return
         rutas = []
         self._skips = {}
+        self._tocados = set()
         for d in datos:
             if isinstance(d, str):                       # formato viejo: solo la ruta
                 rutas.append(d)
@@ -1020,6 +1115,8 @@ class Biblioteca(QListWidget):
                 rutas.append(d["ruta"])
                 if d.get("skip"):
                     self._skips[os.path.normcase(os.path.abspath(d["ruta"]))] = True
+                    if d.get("toc"):
+                        self._tocados.add(os.path.normcase(os.path.abspath(d["ruta"])))
         if not rutas:
             return
         self._carga = {"rutas": rutas, "i": 0, "n": 0, "dup": 0, "firmas": self._firmas_actuales(), "primera": False}
@@ -1036,6 +1133,16 @@ class Biblioteca(QListWidget):
         self.setUpdatesEnabled(False)
         try:
             rutas = c["rutas"]
+            if "agr" not in c:                                                    # primera tanda: si la vista es por carpetas, la lista se arma YA con sus carpetas (contraídas)
+                c["agr"] = bool(self.agrupado)
+                c["ult"] = None
+                c["tot"] = {}
+                if c["agr"]:
+                    for r in rutas:
+                        k = self._carpeta(r)
+                        c["tot"][k] = c["tot"].get(k, 0) + 1
+                    rutas.sort(key=lambda r: (os.path.basename(self._carpeta(r)).lower(), self._carpeta(r)))      # (estable: dentro de cada carpeta queda el orden guardado)
+                    self._plegadas.update(c["tot"])
             lim = 0.012 if _hay_musica() else 0.03                                # ~30 ms por tanda (12 ms si suena música: así el audio no se corta)
             while c["i"] < len(rutas) and time.perf_counter() - t0 < lim:
                 p = rutas[c["i"]]; c["i"] += 1
@@ -1053,7 +1160,14 @@ class Biblioteca(QListWidget):
                 # (la lista guardada se carga tal cual: si agregaste una copia a propósito -«Agregar las copias igual»- tiene que seguir ahí
                 #  al reiniciar; los repetidos solo se filtran al ARRASTRAR temas nuevos)
                 self._rutas.add(clave)
+                if c["agr"]:
+                    k = self._carpeta(p)
+                    if k != c["ult"]:
+                        c["ult"] = k
+                        self._agregar_cab(k, os.path.dirname(os.path.abspath(p)), c["tot"].get(k, 1))
                 self.addItem(self._crear_item(p, clave))
+                if c["agr"] and c["ult"] in self._plegadas:
+                    self.setRowHidden(self.count() - 1, True)
                 c["n"] += 1
         finally:
             self._cargando = prev
@@ -1068,6 +1182,9 @@ class Biblioteca(QListWidget):
         self._carga = None                                   # todos los temas ya están en la lista
         log("biblioteca", f"+{c['n']} tema(s) agregado(s) · total {self.count()}")
         self._precargando = True
+        if self.agrupado and self.count() and not self._es_cab(self.item(0)):
+            self._poner_cab()                                # las carpetas se ven YA (armarlas lleva menos de 1 s); el BPM, el tono y las duraciones llegan después
+        self.lista_cargada.emit()
         threading.Thread(target=self._precargar_info, args=(self.todas(),), daemon=True).start()    # BPM / tono de cada tema, sin trabar la ventana
 
     def _precargar_info(self, rutas):

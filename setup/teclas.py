@@ -1,6 +1,8 @@
-"""AutoMix — teclas globales F2 y flechas ↑ / ↓ (volumen) (Windows)."""
+"""AutoMix — teclas globales F2 y flechas ↑ / ↓ (volumen) (Windows) y flechas ← / → sobre el slider que está bajo el mouse."""
 import sys
-from PySide6.QtCore import QAbstractNativeEventFilter, QCoreApplication, QTimer
+from PySide6.QtCore import QAbstractNativeEventFilter, QCoreApplication, QEvent, QObject, Qt, QTimer
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QAbstractSlider, QAbstractSpinBox, QApplication, QLineEdit, QPlainTextEdit, QTextEdit
 
 
 # =====================================================================
@@ -109,3 +111,45 @@ class TeclasGlobalesVolumen(QAbstractNativeEventFilter):
         except Exception:
             pass
         return False, 0
+
+
+class FlechasSobreSlider(QObject):
+    """Flechas ← / → mueven el slider que está bajo el mouse (un paso por pulsación; mantenerlas sigue moviendo).
+    Solo dentro de AutoMix (no son teclas globales). No se mete si se está escribiendo en un cuadro de texto o hay un menú abierto."""
+    _TEXTO = (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)
+
+    def instalar(self):
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def quitar(self):
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
+    @staticmethod
+    def _slider_bajo_el_mouse():
+        w = QApplication.widgetAt(QCursor.pos())
+        while w is not None:
+            if isinstance(w, QAbstractSlider):
+                return w
+            w = w.parentWidget()
+        return None
+
+    def eventFilter(self, obj, ev):
+        try:
+            if ev.type() != QEvent.Type.KeyPress or ev.key() not in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                return False
+            if ev.modifiers() & ~Qt.KeyboardModifier.KeypadModifier:        # solo la flecha sola (sin Ctrl / Alt / Shift)
+                return False
+            if QApplication.activePopupWidget() is not None or isinstance(QApplication.focusWidget(), self._TEXTO):
+                return False
+            sl = self._slider_bajo_el_mouse()
+            if sl is None or not sl.isEnabled():
+                return False
+            sl.triggerAction(QAbstractSlider.SliderAction.SliderSingleStepAdd if ev.key() == Qt.Key.Key_Right
+                             else QAbstractSlider.SliderAction.SliderSingleStepSub)
+            return True
+        except Exception:
+            return False

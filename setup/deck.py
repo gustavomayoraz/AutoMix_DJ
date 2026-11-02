@@ -12,6 +12,7 @@ from setup import cruce_auto, nivel
 from setup.ajustes import NIVEL_V2, SUPPORTED, TARGET_LUFS_RMS, fmt_time
 from setup.analisis import (_guardar_cache, _limpiar_grilla_cache, _mantener_vivo, aplicar_uno, desfase_rejilla_auto,
                             desfase_rejilla_bombos, desplazar_rejilla, grilla_manual, load_audio_stereo, plegar_bpm)
+from setup import almacen
 from setup.base import CACHE_DIR, _log_diferido, log
 from setup.hilos_analisis import Analyzer, RehacerUno
 from setup.tema import TEMA, _rgba
@@ -347,7 +348,7 @@ class Deck(QFrame):
         if plegar_bpm(res):                                   # BPM absurdo (p. ej. 1535): se lleva al rango musical y se guarda
             log(f"deck {self.name}", f"BPM fuera de rango corregido → {res['bpm']:.1f}")
             try:
-                _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), res)
+                _guardar_cache(almacen.ruta_cache(self.path), res)
             except Exception:
                 pass
         self.analysis = res
@@ -393,7 +394,7 @@ class Deck(QFrame):
             with self.lock:
                 desplazar_rejilla(self.analysis, off)
                 self._db_cache = None
-            _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), self.analysis)
+            _guardar_cache(almacen.ruta_cache(self.path), self.analysis)
             log(f"deck {self.name}", f"grilla auto: corrida {off*1000:+.0f} ms sobre los bombos")
             if self.on_analysis_cb:
                 self.on_analysis_cb(self.name, self.analysis)
@@ -414,7 +415,7 @@ class Deck(QFrame):
             desplazar_rejilla(self.analysis, off)
             self._db_cache = None
         try:
-            _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), self.analysis)
+            _guardar_cache(almacen.ruta_cache(self.path), self.analysis)
         except Exception:
             import traceback; traceback.print_exc()
         if avisar and self.on_analysis_cb:
@@ -439,7 +440,7 @@ class Deck(QFrame):
                 self._db_cache = None
             self._update_bpm_label()
             try:
-                _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), self.analysis)
+                _guardar_cache(almacen.ruta_cache(self.path), self.analysis)
             except Exception:
                 import traceback; traceback.print_exc()
             if avisar and self.on_analysis_cb:
@@ -477,7 +478,7 @@ class Deck(QFrame):
             if self.on_analysis_cb:
                 self.on_analysis_cb(self.name, self.analysis)
         try:
-            _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), self.analysis)
+            _guardar_cache(almacen.ruta_cache(self.path), self.analysis)
         except Exception:
             import traceback; traceback.print_exc()
 
@@ -488,7 +489,7 @@ class Deck(QFrame):
             aplicar_uno(self.analysis, r[0], r[1])
             self._db_cache = None
         try:
-            _guardar_cache(CACHE_DIR / (Path(self.path).stem + ".json"), self.analysis)
+            _guardar_cache(almacen.ruta_cache(self.path), self.analysis)
         except Exception:
             import traceback; traceback.print_exc()
         log(f"deck {self.name}", f"el 1 recalculado tras cambiar la octava · confianza {r[1]:.2f}")

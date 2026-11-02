@@ -1,5 +1,6 @@
 """AutoMix — biblioteca: análisis de los temas, orden, carga en los decks."""
 import os
+import threading
 import time
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QMessageBox
 from PySide6.QtCore import QTimer, Qt
@@ -9,6 +10,7 @@ from setup.analizador_aparte import aparte_activo, lanzar_aparte
 from setup.base import log
 from setup.config import guardar_config, leer_config
 from setup.deck import Deck
+from setup import estilo
 from setup.estadisticas import EST, Seguimiento
 from setup.dialogo_analisis import DialogoAnalisis
 from setup.hilos_analisis import AnalizadorBiblioteca
@@ -34,6 +36,7 @@ class BibliotecaMixin:
             if self._seguimientos[nombre].actualizar(d.path, d.playing, d.position_seconds(), len(audio) / d.sr):
                 n = EST.sumar(d.path)
                 log("estadisticas", f"{os.path.basename(d.path)}: {n} reproducciones")
+                self.biblioteca.marcar_tocado(d.path)             # ya sonó: queda tildado para que no se repita solo
                 self.biblioteca.refrescar_estadisticas()
 
     def _abrir_estadisticas(self):
@@ -418,9 +421,75 @@ class BibliotecaMixin:
             self._set_status("✅ Lista analizada")
         QTimer.singleShot(300, self._auto_analizar)           # por si se agregaron temas mientras tanto
 
+    _modo_orden = "bpm"               # 'bpm' (orden de siempre) o 'estilo' (🎵 Ordenar por estilo: no se reordena sola al analizar)
+    _estilo_corriendo = False
+    _estilo_conectado = False
+
+    def _ordenar_por_estilo(self):
+        """🎵 Ordena la lista del tema más parecido al menos parecido (sin carpetas), partiendo del tema que suena.
+        Lee los análisis en un hilo (la ventana sigue respondiendo)."""
+        if self._estilo_corriendo:
+            return
+        bib = self.biblioteca
+        rutas = bib.todas()
+        if len(rutas) < 3:
+            self._set_status("🎵 Hacen falta al menos 3 temas en la lista para ordenarlos por estilo")
+            return
+        prim = self._deck_primario()
+        inicio = prim.path if (prim is not None and prim.path) else None
+        if not inicio:
+            sel = [x for x in bib.selectedItems() if not bib._es_cab(x)]
+            inicio = sel[0].data(Qt.ItemDataRole.UserRole) if sel else None
+        if not self._estilo_conectado:
+            self._estilo_conectado = True
+            bib.estilo_listo.connect(self._estilo_terminado)
+            bib.estilo_progreso.connect(lambda i, n: self._set_status(f"⏳ Leyendo el análisis de los temas… {i} / {n}"))
+        self._estilo_corriendo = True
+        self.btn_estilo.setEnabled(False)
+        self._set_status(f"⏳ Leyendo el análisis de {len(rutas)} temas…")
+
+        def _run():
+            try:
+                res = estilo.ordenar(rutas, inicio, lambda i, n: bib.estilo_progreso.emit(i, n))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                res = e
+            bib.estilo_listo.emit(res)
+        threading.Thread(target=_run, daemon=True, name="orden-estilo").start()
+
+    def _estilo_terminado(self, res):
+        self._estilo_corriendo = False
+        self.btn_estilo.setEnabled(True)
+        if isinstance(res, Exception):
+            self._set_status(f"⚠️ No se pudo ordenar por estilo ({type(res).__name__}: {res})")
+            return
+        orden, con = res
+        if con < 2:
+            self._set_status("🎵 Casi ningún tema de la lista tiene análisis todavía: analizalos primero (🔄 Re-analizar)")
+            return
+        self._modo_orden = "estilo"                       # (antes de apagar «Por carpetas»: a partir de acá el orden de la lista no se pisa solo)
+        guardar_config(lib_orden="estilo")
+        if self.btn_agrupar.isChecked():                  # lista plana: sin carpetas, todos los temas juntos
+            self.btn_agrupar.blockSignals(True); self.btn_agrupar.setChecked(False); self.btn_agrupar.blockSignals(False)
+            self._alternar_agrupada(False)
+        self.biblioteca.aplicar_orden(orden)
+        sin = len(orden) - con
+        self._set_status(f"🎵 Lista ordenada por estilo: del más parecido al menos parecido ({con} temas)"
+                         + (f" · {sin} sin análisis quedaron al final" if sin else ""))
+
+    def _destildar_tocados(self):
+        """Destilda los temas que se tildaron solos por haber sonado (los que se tildaron a mano se respetan)."""
+        n, a_mano = self.biblioteca.destildar_tocados()
+        if n:
+            self._set_status(f"⬜ {n} temas destildados" + (f" · los {a_mano} que tildaste a mano se quedan tildados" if a_mano else ""))
+        else:
+            self._set_status("⬜ No hay temas tildados por haber sonado" + (f" (los {a_mano} tildados a mano no se tocan)" if a_mano else ""))
+
     def _ordenar_lista(self):
         """Con 🎼 Armónico y/o 🥁 En frase la lista se ordena como cadena de mezcla (empezando por el tema que
-        suena); sin ninguna, por BPM de menor a mayor."""
+        suena); sin ninguna, por BPM de menor a mayor. Con 🎵 Ordenar por estilo activo, no se toca."""
+        if self._modo_orden == "estilo":
+            return
         arm, fra = self.chk_armonico.isChecked(), self.chk_frases.isChecked()
         if not (arm or fra):
             self.biblioteca.ordenar_por_bpm()
@@ -459,6 +528,9 @@ class BibliotecaMixin:
     def _alternar_agrupada(self, v):
         self.biblioteca.set_agrupado(bool(v))
         if v:
+            if self._modo_orden != "bpm":
+                self._modo_orden = "bpm"                      # por carpetas: dentro de cada una, el orden de siempre
+                guardar_config(lib_orden="bpm")
             self._ordenar_lista()                             # dentro de cada carpeta, el orden de siempre (por BPM)
         guardar_config(lib_agrupada=bool(v))
         self._set_status("📂 Lista separada por carpetas (clic en un título para cerrarlo o abrirlo)" if v else "📃 Lista plana")
@@ -493,6 +565,9 @@ class BibliotecaMixin:
         self._set_status("🎲 Modo Random: el que sigue es uno al azar, analizado y de BPM parecido al que suena" if on else "➡ Modo normal: sigue el orden de la lista")
 
     def _ordenar_biblioteca_bpm(self):
+        if self._modo_orden != "bpm":
+            self._modo_orden = "bpm"                          # el clic explícito vuelve al orden por BPM
+            guardar_config(lib_orden="bpm")
         self._ordenar_lista()                                 # ya: primero los que tienen BPM conocido
         self._fallidos = set()                                # un clic explícito vuelve a intentar los que fallaron
         faltan = self._pendientes()

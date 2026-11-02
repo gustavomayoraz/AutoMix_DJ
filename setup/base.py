@@ -20,10 +20,50 @@ VERSION_PY = f"{sys.version_info.major}.{sys.version_info.minor}"          # 3.1
 OFFLINE = ROOT / "dependencias_offline" / VERSION_PY
 
 
-CACHE_DIR = ROOT / "cache"
+LEGADO_DIR = ROOT / "cache"      # donde guardaban sus datos las versiones anteriores (dentro de la carpeta del programa: se borraba al desinstalar)
 
 
-CACHE_DIR.mkdir(exist_ok=True)
+def _carpeta_datos():
+    """Carpeta PERMANENTE de datos (análisis, lista, estadísticas, configuración): fuera de la carpeta del programa, para que
+    sobreviva a desinstalar y volver a instalar. En Windows: C:\\AutoMix_datos (o la que diga la variable AUTOMIX_DATOS).
+    Si no se puede crear o escribir ahí, se sigue usando la carpeta cache del programa."""
+    elegida = os.environ.get("AUTOMIX_DATOS")
+    if elegida or os.name == "nt":
+        d = Path(elegida or "C:/AutoMix_datos")
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            prueba = d / ".escritura.tmp"
+            prueba.write_text("ok", encoding="utf-8")
+            prueba.unlink()
+            return d
+        except OSError:
+            pass
+    return LEGADO_DIR
+
+
+CACHE_DIR = _carpeta_datos()      # (se llama CACHE_DIR por historia: es la carpeta de datos permanente)
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+_CHICOS = ("config_v2.json", "config.json", "biblioteca.json", "temas_danados.json", "estadisticas_temas.json",
+           "valoraciones_cruce.json", "huellas_estilo.json", "indice.db")
+
+
+def _copiar_lo_viejo():
+    """Primera vez en la carpeta permanente: copia lo de la carpeta cache vieja del programa (configuración, lista, estadísticas, índice).
+    Los análisis NO se copian acá (son miles): el almacén los lee del lugar viejo y los pasa de a poco, comprimidos."""
+    if CACHE_DIR == LEGADO_DIR or not LEGADO_DIR.is_dir():
+        return
+    try:
+        import shutil
+        for n in _CHICOS:
+            o, d = LEGADO_DIR / n, CACHE_DIR / n
+            if o.is_file() and not d.exists():
+                shutil.copy2(o, d)
+    except OSError:
+        pass
+
+
+_copiar_lo_viejo()
 
 
 

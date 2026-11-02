@@ -1,12 +1,14 @@
 """AutoMix — ⚙ Ajustes generales del cruce: todos los tiempos que arman el 'retardo' (la onda) del crossfader.
 Lo que se mueve acá se aplica enseguida (en la próxima mezcla) y queda guardado."""
 import math
+import os
 import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QScrollArea, QSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget)
 from setup import aprendizaje, cruce_auto
+from setup.base import CACHE_DIR
 from setup.config import (DEF_FIN_A, DEF_GAMMA_A, DEF_PUNTO_A, DEF_PUNTO_B, DEF_PUNTO_S, DEF_RAMPA_B, guardar_config, leer_config,
                           perfil_cruce_ab, perfil_cruce_bandas)
 from setup.tema import COLOR_DECK_A, COLOR_DECK_B, TEMA
@@ -867,10 +869,14 @@ class AjustesCruce(QDialog):
         self.b_olv = QPushButton("🧠 Olvidar lo aprendido")
         self.b_olv.setToolTip("Borra los 👍 / 👎 guardados: el Auto vuelve a hacer exactamente lo que dice el panel.")
         self.b_olv.clicked.connect(self._olvidar)
+        self.b_datos = QPushButton("📂 Abrir carpeta de datos")
+        self.b_datos.setToolTip(f"Abre la carpeta donde AutoMix guarda todo lo analizado, tu lista, los 👍 y las estadísticas:\n{CACHE_DIR}\n"
+                                "Cópiala para tener un respaldo; si la pones en otro equipo (o la recuperas después de reinstalar) no hay que volver a analizar.")
+        self.b_datos.clicked.connect(self._abrir_datos)
         b_cer = QPushButton("Cerrar"); b_cer.clicked.connect(self.close)
-        for b in (b_def, self.b_olv, b_cer):
+        for b in (b_def, self.b_olv, self.b_datos, b_cer):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        fila.addWidget(b_def); fila.addWidget(self.b_olv); fila.addStretch(1); fila.addWidget(b_cer)
+        fila.addWidget(b_def); fila.addWidget(self.b_olv); fila.addWidget(self.b_datos); fila.addStretch(1); fila.addWidget(b_cer)
         lay.addLayout(fila)
         self._visibles()
         try:
@@ -1012,6 +1018,21 @@ class AjustesCruce(QDialog):
             self.v.timeline.redraw()                       # las dos líneas rojas de «Qué tan bajo es un break» también dependen de estos ajustes
         except AttributeError:
             pass
+
+    def _abrir_datos(self):
+        """Abre la carpeta de datos permanente en el Explorador."""
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(CACHE_DIR))
+            else:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(CACHE_DIR)))
+        except OSError as e:
+            self.b_datos.setText("📂 No se pudo abrir")
+            self.b_datos.setToolTip(str(e))
+            QTimer.singleShot(2500, lambda: self.b_datos.setText("📂 Abrir carpeta de datos"))
 
     def _olvidar(self):
         aprendizaje.olvidar()

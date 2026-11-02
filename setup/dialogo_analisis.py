@@ -20,7 +20,7 @@ class DialogoAnalisis(QDialog):
     cancelar = Signal()
     segundo_plano = Signal()
 
-    def __init__(self, parent, total, procesos=0, permitir_fondo=True, base=0, pie=None):
+    def __init__(self, parent, total, procesos=0, permitir_fondo=True, base=0, pie=None, volver=None):
         super().__init__(parent)
         self._base = max(0, base)          # temas que ya estaban analizados antes de esta tanda (el avance se muestra sobre el total de la lista)
         self.setWindowTitle("AutoMix 🎚️ — Analizando biblioteca")
@@ -60,6 +60,11 @@ class DialogoAnalisis(QDialog):
         self.btn_fondo.clicked.connect(self._fondo)
         self.btn_fondo.setVisible(permitir_fondo)
         fila.addWidget(self.btn_fondo)
+        if volver is not None:                                # analizador aparte: desde acá se vuelve al reproductor (si no está abierto, se abre)
+            self.btn_volver = QPushButton("🎧 Volver al reproductor")
+            self.btn_volver.setToolTip("Trae el reproductor al frente (si está cerrado, lo abre). El análisis sigue acá.")
+            self.btn_volver.clicked.connect(volver)
+            fila.addWidget(self.btn_volver)
         self.btn = QPushButton("⏹ Detener")
         self.btn.setToolTip("Se detiene el análisis; lo ya analizado se conserva")
         self.btn.clicked.connect(self._cancelar)

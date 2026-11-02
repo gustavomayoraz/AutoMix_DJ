@@ -5,9 +5,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from setup.base import CACHE_DIR
+from setup.base import CACHE_DIR, ROOT
 
-RAIZ = CACHE_DIR.parent
+RAIZ = ROOT                  # carpeta del programa (la de datos ya no está dentro de ella)
 LISTA = CACHE_DIR / "lista_analisis_aparte.txt"
 LOCK = CACHE_DIR / ".analizador_aparte.lock"
 LATIDO_S = 2.0              # el programa aparte "toca" el archivo cada tanto: si pasan más de VIVO_S sin tocarlo, se lo da por cerrado
@@ -38,6 +38,55 @@ def lanzar_aparte(rutas, suave=False, forzar=False):
     if forzar:
         cmd.append("--forzar")
     return subprocess.Popen(cmd, cwd=str(RAIZ), creationflags=0x08000000 if os.name == "nt" else 0)
+
+
+def _traer_reproductor():
+    """Trae al frente la ventana del reproductor (aunque esté minimizada o detrás). Si no está abierto, lo abre.
+    En Windows busca una ventana visible de OTRO proceso cuyo título empiece con 'AutoMix' (la más grande: la principal)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes as w
+            u = ctypes.windll.user32
+            propio = os.getpid()
+            hallados = []
+            enum = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+
+            def _cb(h, _):
+                if not u.IsWindowVisible(h):
+                    return True
+                n = u.GetWindowTextLengthW(h)
+                if n <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u.GetWindowTextW(h, buf, n + 1)
+                if not buf.value.startswith("AutoMix"):
+                    return True
+                pid = w.DWORD(0)
+                u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+                if pid.value == propio:
+                    return True
+                r = w.RECT()
+                u.GetWindowRect(h, ctypes.byref(r))
+                area = max(0, r.right - r.left) * max(0, r.bottom - r.top)
+                hallados.append((bool(u.IsIconic(h)), area, h))
+                return True
+            u.EnumWindows(enum(_cb), 0)
+            if hallados:
+                h = max(hallados, key=lambda t: t[1])[2]                             # la más grande: la ventana principal
+                u.ShowWindow(h, 9)                                                   # SW_RESTORE
+                u.SetForegroundWindow(h)
+                return True
+        except (OSError, AttributeError):
+            pass
+    exe = Path(sys.executable)
+    if os.name == "nt" and exe.with_name("pythonw.exe").exists():
+        exe = exe.with_name("pythonw.exe")
+    try:
+        subprocess.Popen([str(exe), str(RAIZ / "AutoMix.py")], cwd=str(RAIZ), creationflags=0x08000000 if os.name == "nt" else 0)
+        return True
+    except OSError:
+        return False
 
 
 def _tomar_lock():
@@ -80,7 +129,7 @@ def main(argv):
     n = AnalizadorBiblioteca._limitar_por_ram(max(1, min(10, (os.cpu_count() or 2) - 2))) if not suave else AnalizadorBiblioteca._num_trabajadores()
     pie = ("Podés seguir usando el reproductor: el análisis se hace aparte y lo guardado queda en la carpeta cache."
            if not suave else "Modo suave (prioridad baja): se puede usar el reproductor mientras tanto, pero tarda más.")
-    dlg = DialogoAnalisis(None, len(rutas), n, permitir_fondo=False, pie=pie)
+    dlg = DialogoAnalisis(None, len(rutas), n, permitir_fondo=False, pie=pie, volver=_traer_reproductor)
     dlg.setWindowTitle("AutoMix 🎚️ — Analizador aparte")
     dlg.show()
     a = AnalizadorBiblioteca(rutas, forzar=forzar, modo_max=not suave, aparte=True)

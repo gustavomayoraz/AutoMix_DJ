@@ -136,4 +136,11 @@ QScrollBar::handle:horizontal:hover {{ background:{T['cian']}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background:transparent; }}
 QFrame[frameShape="4"] {{ color:{T['linea']}; }}
+
+QMessageBox {{ background:#1f3b63; border:2px solid #4fd1ff; }}
+QMessageBox QLabel {{ color:#ffffff; background:transparent; }}
+QMessageBox QPushButton {{ background:#2f5f99; color:#ffffff; border:1px solid #7fb4ee; border-radius:8px; padding:7px 8px; }}
+QMessageBox QPushButton:hover {{ background:#3b74b8; border:1px solid #4fd1ff; }}
+QMessageBox QPushButton:default {{ background:#1f9d55; border:1px solid #6fe3a1; }}
+QMessageBox QPushButton:default:hover {{ background:#27b865; }}
 """)

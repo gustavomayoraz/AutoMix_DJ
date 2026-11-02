@@ -1008,11 +1008,8 @@ def _analizar_archivo(path):
 
 
 def _guardar_cache(cache_key, result):
-    tmp = Path(str(cache_key) + ".tmp")
-    txt = json.dumps(result)                  # (json.dump a un archivo usa el codificador lento en Python: ~1,4 s en la interfaz; dumps usa el rápido en C)
-    with open(tmp, "w") as f:
-        f.write(txt)
-    os.replace(tmp, cache_key)
+    from setup import almacen
+    almacen.guardar(cache_key, result)        # atómico y comprimido (.json.gz); el formato viejo (.json) también se sigue pudiendo escribir
     try:
         from setup.indice import registrar        # el índice liviano (lo que usa la lista) se mantiene al día en cada guardado
         registrar(cache_key, result)

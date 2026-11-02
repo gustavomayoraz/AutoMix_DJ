@@ -88,7 +88,8 @@ def registrar(cache_key, d):
     try:
         con = _conectar()
         try:
-            con.execute(_UPSERT, fila_de(Path(cache_key).stem, d))
+            from setup.almacen import tema_de
+            con.execute(_UPSERT, fila_de(tema_de(cache_key), d))
             con.commit()
         finally:
             con.close()
@@ -160,18 +161,20 @@ def contar():
 def migrar(temas_json=None, progreso=None, cancelar=None):
     """Llena el índice con los .json de la caché que todavía no están. Devuelve cuántos agregó.
     `progreso(i, total)` y `cancelar()` son opcionales. Lee de a un archivo y guarda de a 200."""
+    from setup.almacen import ANALISIS_DIR, leer, tema_de
     existentes = set(todo().keys())
-    pend = [p for p in (temas_json if temas_json is not None else CACHE_DIR.glob("*.json")) if Path(p).stem not in existentes]
+    if temas_json is None:
+        temas_json = list(ANALISIS_DIR.glob("*.json.gz"))
+    pend = [p for p in temas_json if tema_de(p) not in existentes]
     lote, n = [], 0
     for i, p in enumerate(pend, 1):
         if cancelar is not None and cancelar():
             break
         try:
-            with open(p, encoding="utf-8") as f:
-                d = json.load(f)
+            d = leer(p)
             if isinstance(d, dict) and "bpm" in d:
-                lote.append(fila_de(Path(p).stem, d))
-        except (OSError, ValueError):
+                lote.append(fila_de(tema_de(p), d))
+        except (OSError, ValueError, EOFError):
             pass
         if len(lote) >= 200:
             registrar_lote(lote); n += len(lote); lote = []

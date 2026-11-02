@@ -15,18 +15,19 @@ class DialogoDanados(QDialog):
         T = TEMA
         self.setWindowTitle("AutoMix 🎚️ — Temas dañados")
         self.resize(820, 420)
-        self.setStyleSheet(
-            f"QDialog {{ background:{T['bg1']}; }} QLabel {{ color:{T['texto']}; }}"
-            f"QTableWidget {{ background:{T['bg2']}; color:{T['texto']}; gridline-color:{T['linea']}; border:1px solid {T['linea']}; }}"
-            f"QHeaderView::section {{ background:{T['bg3']}; color:{T['suave']}; border:0; padding:4px; }}"
-            f"QPushButton {{ background:{T['bg3']}; color:{T['texto']}; border:1px solid {T['linea']}; border-radius:8px; padding:7px 14px; }}"
-            f"QPushButton:hover {{ border:1px solid {T['cian']}; }}")
+        self.setStyleSheet(                                      # mismo azul que los cuadros de mensaje (se distingue del reproductor)
+            "QDialog { background:#1f3b63; border:2px solid #4fd1ff; } QLabel { color:#ffffff; background:transparent; }"
+            "QTableWidget { background:#17304f; color:#ffffff; gridline-color:#35588a; border:1px solid #35588a; selection-background-color:#2f7fd0; selection-color:#ffffff; }"
+            "QHeaderView::section { background:#2f5f99; color:#ffffff; border:0; border-right:1px solid #1f3b63; padding:5px; font-weight:bold; }"
+            "QTableCornerButton::section { background:#2f5f99; border:0; }"
+            "QPushButton { background:#2f5f99; color:#ffffff; border:1px solid #7fb4ee; border-radius:8px; padding:7px 14px; }"
+            "QPushButton:hover { background:#3b74b8; border:1px solid #4fd1ff; }")
         lay = QVBoxLayout(self); lay.setContentsMargins(16, 14, 16, 14); lay.setSpacing(10)
         self.lbl = QLabel(); self.lbl.setStyleSheet("font-size:14px; font-weight:bold;")
         lay.addWidget(self.lbl)
         nota = QLabel("Archivos que no se pudieron cargar o analizar. La carga automática y el Random los saltean. "
                       "Si arreglás o reemplazás el archivo, se quita solo de la lista.")
-        nota.setWordWrap(True); nota.setStyleSheet(f"color:{T['suave']}; font-size:11px;")
+        nota.setWordWrap(True); nota.setStyleSheet("color:#cfe3ff; font-size:11px;")
         lay.addWidget(nota)
         self.tabla = QTableWidget(0, 5)
         self.tabla.setHorizontalHeaderLabels(["Tema", "Carpeta", "Motivo", "Fecha", "Veces"])

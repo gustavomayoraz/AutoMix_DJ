@@ -1,6 +1,7 @@
 """AutoMix — rejilla: todo automático (octava, desfase sobre los bombos y el "1" del compás)."""
 from pathlib import Path
 from setup.analisis import UNO_CONF_MIN, _guardar_cache, plegar_bpm
+from setup import almacen
 from setup.base import CACHE_DIR, log
 from setup.config import guardar_config
 
@@ -60,7 +61,7 @@ class RejillaMixin:
             if not d.playing and plegar_bpm(d.analysis):
                 d.original_bpm = d.analysis["bpm"]; d._db_cache = None; d._update_bpm_label()
                 try:
-                    _guardar_cache(CACHE_DIR / (Path(d.path).stem + ".json"), d.analysis)
+                    _guardar_cache(almacen.ruta_cache(d.path), d.analysis)
                 except Exception:
                     pass
                 cambio = True
