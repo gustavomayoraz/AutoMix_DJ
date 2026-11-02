@@ -23,20 +23,24 @@ class BibliotecaMixin:
     """Biblioteca: análisis de los temas, orden, carga en los decks (parte de la ventana principal)."""
 
 
+    _tildado_deck = {}                # {'A': ruta, 'B': ruta}: el tema que ya se tildó al empezar a sonar en cada deck
     _seguimientos = None              # {'A': Seguimiento, 'B': Seguimiento}: cuánto sonó de verdad cada tema de los decks
 
     def _contar_reproducciones(self):
-        """Cada tick: si un tema de un deck pasa el 50 % escuchado, suma una reproducción y la lista actualiza sus estrellas."""
+        """Cada tick: el tema que empieza a sonar en un deck se tilda; si pasa el 50 % escuchado, suma una reproducción y la lista actualiza sus estrellas."""
         if self._seguimientos is None:
             self._seguimientos = {"A": Seguimiento(), "B": Seguimiento()}
+            self._tildado_deck = {}
         for nombre, d in (("A", self.deck_a), ("B", self.deck_b)):
             audio = d.audio
             if audio is None or not d.path or not d.sr:
                 continue
+            if d.playing and self._tildado_deck.get(nombre) != d.path:
+                self._tildado_deck[nombre] = d.path
+                self.biblioteca.marcar_tocado(d.path)             # apenas suena: queda tildado para que no se repita solo (una vez por tema: si lo destildas a mano, no se vuelve a tildar)
             if self._seguimientos[nombre].actualizar(d.path, d.playing, d.position_seconds(), len(audio) / d.sr):
                 n = EST.sumar(d.path)
                 log("estadisticas", f"{os.path.basename(d.path)}: {n} reproducciones")
-                self.biblioteca.marcar_tocado(d.path)             # ya sonó: queda tildado para que no se repita solo
                 self.biblioteca.refrescar_estadisticas()
 
     def _abrir_estadisticas(self):
