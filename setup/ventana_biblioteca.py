@@ -430,7 +430,7 @@ class BibliotecaMixin:
     _estilo_conectado = False
 
     def _ordenar_por_estilo(self):
-        """🎵 Ordena la lista del tema más parecido al menos parecido (sin carpetas), partiendo del tema que suena.
+        """🎵 Ordena la lista por columnas (BPM, tonalidad, voz, bajo, bombos, compás, forma de onda), sin carpetas.
         Lee los análisis en un hilo (la ventana sigue respondiendo)."""
         if self._estilo_corriendo:
             return
@@ -478,7 +478,7 @@ class BibliotecaMixin:
             self._alternar_agrupada(False)
         self.biblioteca.aplicar_orden(orden)
         sin = len(orden) - con
-        self._set_status(f"🎵 Lista ordenada por estilo: del más parecido al menos parecido ({con} temas)"
+        self._set_status(f"🎵 Lista ordenada por estilo: BPM → tonalidad → voz → bajo → bombos → compás → forma de onda ({con} temas)"
                          + (f" · {sin} sin análisis quedaron al final" if sin else ""))
 
     def _destildar_tocados(self):

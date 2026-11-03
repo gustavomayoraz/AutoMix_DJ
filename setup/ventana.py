@@ -150,8 +150,8 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         lib_lay.addLayout(fila_orden)
         self.btn_estilo = QPushButton("🎵 Ordenar por estilo")
         self.btn_estilo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_estilo.setToolTip("Ordena la lista del tema más parecido al menos parecido (tempo, energía, voz, bajo, bombo), sin carpetas.\n"
-                                   "Parte del tema que suena (o del que tengas elegido) y en cada paso sigue el más parecido.\n"
+        self.btn_estilo.setToolTip("Ordena la lista como una planilla, sin carpetas: primero por BPM (de menor a mayor), dentro de cada BPM por tonalidad (rueda Camelot),\n"
+                                   "luego voz, bajo, bombos, compás firme y forma de onda (de menos a más).\n"
                                    "Usa lo que ya analizó AutoMix; la primera vez con muchos temas puede tardar un poco.")
         self.btn_estilo.clicked.connect(self._ordenar_por_estilo)
         self.btn_destildar = QPushButton("⬜ Destildar todos")
