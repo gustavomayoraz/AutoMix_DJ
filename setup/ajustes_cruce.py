@@ -5,10 +5,11 @@ import os
 import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QScrollArea, QSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
+from PySide6.QtWidgets import (QCheckBox, QMessageBox, QComboBox, QDialog, QFrame, QScrollArea, QSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget)
 from setup import aprendizaje, cruce_auto
 from setup.base import CACHE_DIR
+from setup.estadisticas import EST
 from setup.config import (DEF_FIN_A, DEF_GAMMA_A, DEF_PUNTO_A, DEF_PUNTO_B, DEF_PUNTO_S, DEF_RAMPA_B, guardar_config, leer_config,
                           perfil_cruce_ab, perfil_cruce_bandas)
 from setup.tema import COLOR_DECK_A, COLOR_DECK_B, TEMA
@@ -41,6 +42,9 @@ GRUPOS = [
         ("AUTO_ECO", "Temas que no combinan: el que sale se cierra en filtro y se disuelve en un eco", 0, 1, 1, "{:.0f}",
          "1 = cuando los dos temas no combinan (BPM muy distintos o tonalidades que chocan) el que sale va perdiendo agudos a medida que baja su volumen y deja un eco al compás\n"
          "que se apaga solo, así el que entra aparece sobre esa cola y el cambio se disimula. Con temas que combinan no se usa. 0 = sin efecto."),
+        ("AUTO_HPF", "El tema que sale va perdiendo sus graves antes del traspaso del bajo (filtro pasa-altos)", 0, 1, 1, "{:.0f}",
+         "1 = en los cruces del Auto por bandas, en el tramo anterior al traspaso del bajo los graves del tema que sale se van cerrando de a poco (como un filtro pasa-altos\n"
+         "que sube, hasta unos -12 dB), así cuando el bajo pasa al tema que entra no se nota un hueco brusco y el bombo nuevo respira sin competir. 0 = el bajo se traspasa de golpe, como antes."),
         ("AUTO_TONO", "Si las tonalidades chocan, subir o bajar un semitono al tema que entra", 0, 1, 1, "{:.0f}",
          "1 = si los dos temas están en tonalidades que chocan (según la rueda de Camelot) y moviendo UN semitono al que entra quedan compatibles, el Auto lo hace: el tema entra con otro tono\n"
          "pero el mismo tempo (puede sonar apenas distinto al original, como cuando un DJ sube o baja el tono). Se queda así hasta que ese deck cambia de tema. Solo si la tonalidad detectada es confiable. 0 = nunca toca el tono."),
@@ -59,6 +63,12 @@ GRUPOS = [
          "Largo de la mezcla Pro en compases. Se usa el más cercano de 4, 8, 16 o 32 que quepa en lo que le queda al tema que sale.\n16 compases a 96 BPM son unos 40 s · 8 compases, unos 20 s."),
     ]),
     ("📉 Temas incompatibles (BPM muy distintos)", []),            # sin deslizadores: se arrastra el dibujo con el mouse
+    ("⭐ Estadísticas de los temas", [
+        ("EST_ESTRELLAS", "Mostrar las estrellas en la lista", 0, 1, 1, "{:.0f}",
+         "1 = cada tema muestra de 1 a 5 estrellas amarillas según cuánto lo escuchaste comparado con los demás. 0 = ocultas (el conteo se sigue llevando por debajo\ny se ve en la ventana 📊 de estadísticas). El 👍 se ve siempre."),
+        ("EST_PORC", "Porcentaje del tema que hay que escuchar para contar una reproducción", 10, 95, 1, "{:.0f} %",
+         "Cuánto tiene que sonar de verdad un tema para sumar una reproducción (y con eso, estrellas). Los saltos con el mouse no cuentan.\n50 % = la mitad del tema · 90 % = casi completo (ojo: en el Auto el cruce suele empezar antes del final, así que con valores muy altos pocos temas llegan)."),
+    ]),
     ("🥁 Frase y compás", [
         ("ESPERA_FRASE", "Esperar a la frase (s máx., 0 = no)", 0, 30, 1, "{:.0f} s",
          "Al llegar a la marca roja del auto-enganche, la mezcla espera (como mucho este tiempo) al próximo inicio de frase (cada 8 compases)\ndel tema que sale, así arranca en el \"1\" de la frase. 0 = arranca justo en la marca. Solo si la grilla del tema es firme."),
@@ -858,6 +868,12 @@ class AjustesCruce(QDialog):
                 gl.setColumnStretch(1, 1)
                 self._sl[k] = (sl, val, div, fmt)
                 self._filas_w[k] = (lbl, sl, val)
+            if titulo.startswith("⭐"):                     # botón para dejar el conteo en cero (las estrellas vuelven a empezar)
+                self.b_est_borrar = QPushButton("🗑 Borrar todas las estrellas (poner el conteo en cero)")
+                self.b_est_borrar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                self.b_est_borrar.setToolTip("Pone en cero las reproducciones de todos los temas, así las estrellas empiezan de nuevo. Los 👍 se mantienen. No se puede deshacer.")
+                self.b_est_borrar.clicked.connect(self._borrar_estrellas)
+                gl.addWidget(self.b_est_borrar, len(filas), 0, 1, 3)
             self._cajas.append((caja, claves_caja))
             cl.addWidget(caja)
         cl.addStretch(1)
@@ -983,6 +999,11 @@ class AjustesCruce(QDialog):
     def _cambio(self, k, x, div, fmt, val):
         val.setText(fmt.format(x / div))
         cruce_auto.aplicar({k: x / div})
+        if k == "EST_ESTRELLAS":
+            try:
+                self.v.biblioteca.refrescar_estadisticas()
+            except (AttributeError, RuntimeError):
+                pass
         if k == "ESTRATEGIA":
             self._visibles()
         if k in ("ESTRATEGIA", "AUTO_SEG"):
@@ -1033,6 +1054,22 @@ class AjustesCruce(QDialog):
             self.b_datos.setText("📂 No se pudo abrir")
             self.b_datos.setToolTip(str(e))
             QTimer.singleShot(2500, lambda: self.b_datos.setText("📂 Abrir carpeta de datos"))
+
+    def _borrar_estrellas(self):
+        """Pone en cero las reproducciones de todos los temas (con confirmación); los 👍 quedan."""
+        r = QMessageBox.question(self, "AutoMix — borrar estrellas",
+                                 "Se pone en cero el conteo de reproducciones de TODOS los temas, así que las estrellas empiezan de nuevo.\n"
+                                 "Los 👍 se mantienen. No se puede deshacer.\n\n¿Borrar?",
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        n = EST.borrar_reproducciones()
+        try:
+            self.v.biblioteca.refrescar_estadisticas()
+        except (AttributeError, RuntimeError):
+            pass
+        self.b_est_borrar.setText(f"🗑 Borradas ✔ ({n} temas)")
+        QTimer.singleShot(2500, lambda: self.b_est_borrar.setText("🗑 Borrar todas las estrellas (poner el conteo en cero)"))
 
     def _olvidar(self):
         aprendizaje.olvidar()

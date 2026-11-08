@@ -58,6 +58,7 @@ class SyncMixin:
 
         simple = self._cruce_simple()
         bandas = bool(self.cruce_ab and self.cruce_bandas and not simple)
+        cut_a = cut_b = 1.0                              # cierre de graves del Auto (AUTO_HPF): solo cuando se cumple abajo
         if simple and getattr(self, "_inc_mix", False) and (self.mix_timer.isActive() or self.mix_pausa_timer.isActive()):
             # temas incompatibles (mezcla automática): el que suena baja en rampa lineal y el nuevo entra, a volumen normal, cuando al otro le queda INC_ENTRA
             t = x if self._cf_dir == "AB" else 1.0 - x
@@ -86,6 +87,14 @@ class SyncMixin:
                 hi_a, hi_b, lo_a, lo_b = vs_h, ve_h, vs_l, ve_l
             else:
                 hi_a, hi_b, lo_a, lo_b = ve_h, vs_h, ve_l, vs_l
+            if pl and cruce_auto.AUTO_HPF >= 0.5:        # el que sale cierra sus graves de a poco hasta el traspaso del bajo
+                ps = max(0.0, min(0.97, pl["ps"])); w = max(0.02, float(cruce_auto.HPF_VENTANA))
+                u = min(1.0, max(0.0, (t - (ps - w)) / w))       # (pasado el punto sigue cerrado: el traspaso real espera la línea de compás)
+                cierre = 1.0 - float(cruce_auto.HPF_PROF) * (u * u * (3.0 - 2.0 * u))      # (suavizado: empieza y termina sin quiebre)
+                if self._cf_dir == "AB":
+                    cut_a = cierre
+                else:
+                    cut_b = cierre
         else:
             if self.cruce_ab:
                 t = x if self._cf_dir == "AB" else 1.0 - x
@@ -98,6 +107,7 @@ class SyncMixin:
             hi_a = lo_a = gan_a
             hi_b = lo_b = gan_b
 
+        self.deck_a.cut_lo, self.deck_b.cut_lo = cut_a, cut_b
         self.deck_a.vol_hi, self.deck_a.vol_lo = hi_a, lo_a
         self.deck_b.vol_hi, self.deck_b.vol_lo = hi_b, lo_b
         self.deck_a.volume = max(hi_a, lo_a)

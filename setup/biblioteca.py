@@ -15,7 +15,7 @@ from PySide6.QtCore import QEventLoop, QMimeData, QTimer, QUrl, Qt, Signal
 from setup.ajustes import FUENTE_BOOST, SUPPORTED
 from setup.analisis import compat_armonica
 from setup.base import CACHE_DIR, log
-from setup import almacen, indice
+from setup import almacen, cruce_auto, indice
 from setup.estadisticas import EST
 from setup.tema import COLOR_DECK_A, COLOR_DECK_B, TEMA
 
@@ -726,7 +726,7 @@ class Biblioteca(QListWidget):
 
     def _poner_est(self, it, ruta):
         """Estrellas (automáticas) y 👍 (manual) del tema, para que el delegado las dibuje a la derecha."""
-        est, like = EST.estrellas(ruta), EST.like(ruta)
+        est, like = (EST.estrellas(ruta) if cruce_auto.EST_ESTRELLAS >= 0.5 else 0), EST.like(ruta)       # estrellas ocultas por defecto (se muestran desde ⚙ Ajustes)
         if (it.data(Qt.ItemDataRole.UserRole + 5) or 0) != est:
             it.setData(Qt.ItemDataRole.UserRole + 5, est)
         if bool(it.data(Qt.ItemDataRole.UserRole + 6)) != like:

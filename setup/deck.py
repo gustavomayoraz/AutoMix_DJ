@@ -35,6 +35,7 @@ class Deck(QFrame):
         self._cursor_frac = 0.0
         self.playing = False
         self.vol_hi = 1.0; self.vol_lo = 1.0      # ganancia de medios+agudos y de graves (la aplica el mezclador, por bandas)
+        self.cut_lo = 1.0                         # cierre extra de los graves (1 = nada): el Auto lo baja en el tema que sale antes del traspaso del bajo
         self._db_cache = None
         self.volume = 1.0          # volumen de cada deck fijo al 100 %: el nivel se maneja con el crossfader y el volumen general
         self.auto_gain = 1.0

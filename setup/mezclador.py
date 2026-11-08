@@ -167,6 +167,7 @@ class GlobalMixer:
         self._xo_b = CruceLR4(self.F_CRUCE, sr)
         self._g = None                    # ganancias actuales: a_lo, a_hi, b_lo, b_hi
         self._swap_espera = 0.0
+        self._cut = [1.0, 1.0]            # cierre de graves actual de cada deck (suavizado de bloque en bloque)
         self.limitador = LimitadorSuave(sr)
         self.comp_activo = True            # compensador de nivel (lo maneja la ventana)
         self._comp = 1.0                   # ganancia actual del compensador (1 = sin efecto)
@@ -302,6 +303,12 @@ class GlobalMixer:
         if self.banda_activa:
             alo, ahi = self._xo_a.split(a)
             blo, bhi = self._xo_b.split(b)
+            for i, (d, lo) in enumerate(((da, alo), (db, blo))):          # cierre de graves del Auto (AUTO_HPF): rampa dentro del bloque, sin clics
+                c0 = self._cut[i]; obj = getattr(d, "cut_lo", 1.0)
+                c1 = obj if abs(obj - c0) < 1e-3 else c0 + (obj - c0) * 0.25
+                self._cut[i] = c1
+                if c0 != 1.0 or c1 != 1.0:
+                    lo *= self._rampa_2d(c0, c1, frames)
             ga_lo, gb_lo = self._ganancias_bajos(tg, frames, pa, pb)
             p_a = alo * ga_lo + ahi * self._rampa_2d(g["a_hi"], tg["a_hi"], frames)
             p_b = blo * gb_lo + bhi * self._rampa_2d(g["b_hi"], tg["b_hi"], frames)

@@ -1,5 +1,5 @@
 """AutoMix — estadísticas de los temas.
-· Reproducciones: un tema suma una cuando suena de verdad más del 50 % de su duración (los saltos con el mouse no cuentan).
+· Reproducciones: un tema suma una cuando suena de verdad el % de su duración que se elige en ⚙ Ajustes (50 % por defecto; los saltos con el mouse no cuentan).
 · Estrellas (1 a 5): salen solas, según cuánto suena el tema comparado con los demás. Tú no las tocas.
 · 👍: marca manual, aparte de las estadísticas.
 Todo queda en cache/estadisticas_temas.json (se puede borrar)."""
@@ -10,9 +10,18 @@ import time
 from setup.base import CACHE_DIR
 
 ARCHIVO = CACHE_DIR / "estadisticas_temas.json"
-UMBRAL = 0.5            # fracción del tema que tiene que sonar para sumar una reproducción
+UMBRAL = 0.5            # (respaldo) fracción del tema que tiene que sonar para sumar una reproducción; el valor que vale es el de ⚙ Ajustes
 MIN_REF = 5             # con pocas reproducciones en total, las estrellas suben despacio (5 reproducciones = 5 estrellas)
 PERCENTIL = 0.9         # referencia de las 5 estrellas: lo que suenan los temas más tocados (un solo tema muy pasado no aplasta al resto)
+
+
+def _umbral() -> float:
+    """Fracción del tema que tiene que sonar para contar una reproducción (⚙ Ajustes → Estadísticas); entre 10 % y 95 %."""
+    try:
+        from setup import cruce_auto
+        return min(0.95, max(0.10, float(cruce_auto.EST_PORC) / 100.0))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return UMBRAL
 
 
 def _clave(ruta: str) -> str:
@@ -54,7 +63,7 @@ class Estadisticas:
 
     # ---------- reproducciones y 👍 ----------
     def sumar(self, ruta: str) -> int:
-        """Anota una reproducción (el tema sonó más del 50 %). Devuelve el total del tema."""
+        """Anota una reproducción (el tema sonó el % elegido). Devuelve el total del tema."""
         f = self._fila(ruta)
         f["n"] = int(f.get("n", 0)) + 1
         f["ult"] = int(time.time())
@@ -62,6 +71,19 @@ class Estadisticas:
         self._ref = None
         self._guardar()
         return f["n"]
+
+    def borrar_reproducciones(self) -> int:
+        """Pone en cero las reproducciones de todos los temas (y con eso sus estrellas). Los 👍 se mantienen. Devuelve a cuántos temas se les borró."""
+        n = 0
+        for v in self.datos.values():
+            if int(v.get("n", 0)) > 0:
+                n += 1
+            v["n"] = 0
+            v["ult"] = 0
+        self._limpiar_vacios()
+        self._ref = None
+        self._guardar()
+        return n
 
     def poner_like(self, rutas, valor: bool) -> None:
         """Marca o desmarca el 👍 de uno o varios temas."""
@@ -94,7 +116,7 @@ class Estadisticas:
         return self._ref
 
     def estrellas(self, ruta: str) -> int:
-        """0 si nunca sonó más del 50 %; si no, de 1 a 5 según cuánto suena respecto a los demás."""
+        """0 si todavía no tiene reproducciones; si no, de 1 a 5 según cuánto suena respecto a los demás."""
         return self._estrellas_de(self.reproducciones(ruta))
 
     def _estrellas_de(self, n: int) -> int:
@@ -122,7 +144,7 @@ class Seguimiento:
         self.contado = False
 
     def actualizar(self, path: str | None, sonando: bool, pos: float, dur: float) -> bool:
-        """True en el momento exacto en que el tema pasa el 50 % escuchado (una sola vez por vuelta)."""
+        """True en el momento exacto en que el tema pasa el % escuchado elegido en ⚙ Ajustes (una sola vez por vuelta)."""
         if not path or dur <= 0.0:
             return False
         if path != self.path:                              # tema nuevo: se empieza de cero
@@ -133,7 +155,7 @@ class Seguimiento:
         elif sonando and 0.0 < pos - self.pos < 2.0:       # avance normal: suma; un salto con el mouse (>2 s) no suma
             self.acum += pos - self.pos
         self.pos = pos
-        if not self.contado and self.acum >= UMBRAL * dur:
+        if not self.contado and self.acum >= _umbral() * dur:
             self.contado = True
             return True
         return False
