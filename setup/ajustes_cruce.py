@@ -5,7 +5,7 @@ import os
 import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import (QCheckBox, QMessageBox, QComboBox, QDialog, QFrame, QScrollArea, QSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
+from PySide6.QtWidgets import (QCheckBox, QMessageBox, QTabWidget, QComboBox, QDialog, QFrame, QScrollArea, QSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget)
 from setup import aprendizaje, cruce_auto
 from setup.base import CACHE_DIR
@@ -66,7 +66,7 @@ GRUPOS = [
     ("⭐ Estadísticas de los temas", [
         ("EST_ESTRELLAS", "Mostrar las estrellas en la lista", 0, 1, 1, "{:.0f}",
          "1 = cada tema muestra de 1 a 5 estrellas amarillas según cuánto lo escuchaste comparado con los demás. 0 = ocultas (el conteo se sigue llevando por debajo\ny se ve en la ventana 📊 de estadísticas). El 👍 se ve siempre."),
-        ("EST_PORC", "Porcentaje del tema que hay que escuchar para contar una reproducción", 10, 95, 1, "{:.0f} %",
+        ("EST_PORC", "% del tema que hay que escuchar para contar una reproducción", 10, 95, 1, "{:.0f} %",
          "Cuánto tiene que sonar de verdad un tema para sumar una reproducción (y con eso, estrellas). Los saltos con el mouse no cuentan.\n50 % = la mitad del tema · 90 % = casi completo (ojo: en el Auto el cruce suele empezar antes del final, así que con valores muy altos pocos temas llegan)."),
     ]),
     ("🥁 Frase y compás", [
@@ -719,12 +719,12 @@ class PanelCruceAuto(QFrame):
         self.d = dlg
         self.setObjectName("panelnuevo")
         self.setStyleSheet(qss_marco("QFrame#panelnuevo", "#3b82f6", titulo=False))
-        lay = QVBoxLayout(self); lay.setContentsMargins(8, 8, 8, 8); lay.setSpacing(4)
+        lay = QVBoxLayout(self); lay.setContentsMargins(6, 5, 6, 5); lay.setSpacing(2)
         tit = QLabel("🤖 Forma de cruce del AUTO (la base de cada mezcla automática)"); tit.setStyleSheet(f"color:{TEMA['cian']}; font-weight:bold;")
         lay.addWidget(tit)
-        self.graf = GraficoCruce(); self.graf.setMinimumHeight(110)
+        self.graf = GraficoCruce(); self.graf.setMinimumHeight(85)
         lay.addWidget(self.graf)
-        gl = QGridLayout(); gl.setHorizontalSpacing(8); gl.setVerticalSpacing(4); gl.setColumnStretch(1, 1)
+        gl = QGridLayout(); gl.setHorizontalSpacing(8); gl.setVerticalSpacing(1); gl.setColumnStretch(1, 1)
         lay.addLayout(gl)
         self._filas = {}                                                # clave -> (deslizador, valor, función que lo lee, formato)
         self._bloq = False
@@ -813,31 +813,47 @@ class AjustesCruce(QDialog):
         super().__init__(ventana)
         self.v = ventana
         self.setWindowTitle("⚙ Ajustes generales — tiempos y retardo del cruce")
-        self.setMinimumWidth(680)
+        self.setMinimumWidth(580)
         lay = QVBoxLayout(self)
-        lay.setSpacing(8)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(5)
         info = QLabel("Acá se regulan los tiempos del cruce: arrastrá los puntos del dibujo con el mouse o usá el «Ajuste fino» de al lado (pausa, frenado). La línea celeste es el tema que suena "
                       "y la rosa el que entra; la pelotita recorre el cruce. Los cambios se guardan solos y valen desde la próxima mezcla.")
-        info.setWordWrap(True); info.setStyleSheet("color:#9fe3c6;")
+        info.setWordWrap(True); info.setStyleSheet("color:#9fe3c6; font-size:11px;")
         self._info = info
         self._texto_info_viejo = info.text()
-        lay.addWidget(info)
         self.vista = VistaRitmo(ventana, self)
         self._cont_viejo = QWidget()                    # el dibujo de siempre + «Ajuste fino» (estrategias 0 y 1)
         fila_v = QHBoxLayout(self._cont_viejo); fila_v.setContentsMargins(0, 0, 0, 0); fila_v.setSpacing(8)
         fila_v.addWidget(self.vista, 1); fila_v.addWidget(self._crear_panel_fino(), 0)
         self.panel_nuevo = PanelCruceAuto(ventana, self)  # el panel nuevo (estrategia 2 «como mi manual»): configuración PROPIA del Auto
         self.vista_nueva = self.panel_nuevo.graf
-        lay.addWidget(self.panel_nuevo)
-        lay.addWidget(self._cont_viejo)
-        cont = QWidget(); cl = QVBoxLayout(cont); cl.setContentsMargins(0, 0, 6, 0); cl.setSpacing(8)      # los grupos van en una zona con scroll: el formulario no pasa del alto de la pantalla
+        # ---- solapas: cada una con su propia zona con scroll (el formulario no pasa del alto de la pantalla) ----
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(False)
+        self._tabs.setStyleSheet("QTabWidget::pane { border:1px solid #2a3a5c; border-radius:8px; top:-1px; }"
+                                 "QTabBar::tab { background:#131a2c; color:#cfe3ff; padding:6px 12px; border:1px solid #2a3a5c; border-bottom:none;"
+                                 " border-top-left-radius:8px; border-top-right-radius:8px; margin-right:2px; }"
+                                 "QTabBar::tab:selected { background:#1f3b63; color:#ffffff; border-color:#4fd1ff; font-weight:bold; }"
+                                 "QTabBar::tab:hover:!selected { background:#1b2b4a; }")
+
+        def _pagina(titulo_tab):
+            cont_p = QWidget(); cl_p = QVBoxLayout(cont_p); cl_p.setContentsMargins(4, 6, 8, 4); cl_p.setSpacing(4)
+            sc_p = QScrollArea(); sc_p.setWidgetResizable(True); sc_p.setFrameShape(QFrame.Shape.NoFrame); sc_p.setWidget(cont_p)
+            sc_p.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._tabs.addTab(sc_p, titulo_tab)
+            return cl_p
+        pag_forma = _pagina("🤖 Forma del cruce")
+        pag_forma.addWidget(info); pag_forma.addWidget(self.panel_nuevo); pag_forma.addWidget(self._cont_viejo); pag_forma.addStretch(1)
+        paginas = {"estrategia": _pagina("🎛 Estrategia"), "incompatibles": _pagina("📉 Incompatibles"), "estadisticas": _pagina("⭐ Estadísticas")}
+        tab_de = {"🎛": "estrategia", "🥁": "estrategia", "📉": "incompatibles", "⭐": "estadisticas"}      # qué grupo va en qué solapa
         self._sl = {}
         self._filas_w = {}                              # clave -> (etiqueta, deslizador, valor)
         self._cajas = []                                # (caja, [claves])
         for titulo, filas in GRUPOS:
             caja = QGroupBox(titulo)
             gl = QGridLayout(caja)
-            gl.setContentsMargins(8, 14, 8, 6); gl.setHorizontalSpacing(8); gl.setVerticalSpacing(4)
+            gl.setContentsMargins(8, 12, 8, 3); gl.setHorizontalSpacing(8); gl.setVerticalSpacing(1)
             r0 = 0
             claves_caja = [f[0] for f in filas]
             if titulo.startswith("📉"):                     # este grupo es solo el dibujo (se arrastra con el mouse) y una fila con el interruptor y el límite de BPM
@@ -855,17 +871,18 @@ class AjustesCruce(QDialog):
                 r0 = 2
             for r, (k, texto, lo, hi, div, fmt, tip) in enumerate(filas, r0):
                 lbl = QLabel(texto); lbl.setToolTip(tip)
+                lbl.setWordWrap(True); lbl.setMinimumWidth(60)         # las etiquetas largas se parten en dos líneas en vez de ensanchar la ventana
                 if (lo, hi) == (0, 1):                          # sí / no: un tilde, no un deslizador
                     sl = _Tilde(); sl.setToolTip(tip)
                     val = _ValorVacio(); val.setMinimumWidth(56)
                 else:
-                    sl = QSlider(Qt.Orientation.Horizontal); sl.setRange(lo, hi); sl.setToolTip(tip)
+                    sl = QSlider(Qt.Orientation.Horizontal); sl.setRange(lo, hi); sl.setToolTip(tip); sl.setMinimumWidth(110)
                     val = QLabel(); val.setMinimumWidth(56); val.setAlignment(Qt.AlignmentFlag.AlignRight)
                 sl.setValue(int(round(getattr(cruce_auto, k) * div)))
                 sl.valueChanged.connect(lambda x, k=k, div=div, fmt=fmt, val=val: self._cambio(k, x, div, fmt, val))
                 val.setText(fmt.format(sl.value() / div))
                 gl.addWidget(lbl, r, 0); gl.addWidget(sl, r, 1); gl.addWidget(val, r, 2)
-                gl.setColumnStretch(1, 1)
+                gl.setColumnStretch(0, 5); gl.setColumnStretch(1, 1)
                 self._sl[k] = (sl, val, div, fmt)
                 self._filas_w[k] = (lbl, sl, val)
             if titulo.startswith("⭐"):                     # botón para dejar el conteo en cero (las estrellas vuelven a empezar)
@@ -875,11 +892,10 @@ class AjustesCruce(QDialog):
                 self.b_est_borrar.clicked.connect(self._borrar_estrellas)
                 gl.addWidget(self.b_est_borrar, len(filas), 0, 1, 3)
             self._cajas.append((caja, claves_caja))
-            cl.addWidget(caja)
-        cl.addStretch(1)
-        sc = QScrollArea(); sc.setWidgetResizable(True); sc.setFrameShape(QFrame.Shape.NoFrame); sc.setWidget(cont)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        lay.addWidget(sc, 1)
+            paginas[tab_de.get(titulo[:1], "estrategia")].addWidget(caja)
+        for cl_p in paginas.values():
+            cl_p.addStretch(1)
+        lay.addWidget(self._tabs, 1)
         fila = QHBoxLayout()
         b_def = QPushButton("Valores por defecto"); b_def.clicked.connect(self._defecto)
         self.b_olv = QPushButton("🧠 Olvidar lo aprendido")
@@ -896,10 +912,10 @@ class AjustesCruce(QDialog):
         lay.addLayout(fila)
         self._visibles()
         try:
-            alto = int(self.screen().availableGeometry().height() * 0.88)
+            alto = int(self.screen().availableGeometry().height() * 0.60)
         except Exception:
             alto = 800
-        self.resize(720, min(alto, 900))
+        self.resize(640, min(alto, 600))
 
     def inc_set(self, k, v):
         """Cambia un valor del fundido de temas incompatibles (desde el dibujo, el interruptor o el límite de BPM) y lo guarda."""
