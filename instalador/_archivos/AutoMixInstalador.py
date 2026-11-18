@@ -32,7 +32,7 @@ from typing import Callable, Optional
 # ----------------------------------------------------------------------------------------------------
 # Configuración
 # ----------------------------------------------------------------------------------------------------
-REPO_ZIP = "https://github.com/gustavomayoraz-ship-it/AutoMix_DJ/archive/refs/heads/main.zip"
+REPO_ZIP = "https://github.com/gustavomayoraz/AutoMix_DJ/archive/refs/heads/main.zip"
 PY_VERSIONES = ["3.14.10", "3.14.9", "3.14.8"]          # se prueba en orden: si una ya no está en python.org, se usa la siguiente
 PY_EMBED_URL = "https://www.python.org/ftp/python/{v}/python-{v}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
@@ -116,30 +116,80 @@ class Instalacion:
     def _opener(self) -> urllib.request.OpenerDirector:
         return urllib.request.build_opener()
 
+    def _bajar_urllib(self, url: str, parcial: Path, avance: Optional[Callable[[Optional[int]], None]]) -> None:
+        """Forma 1: la biblioteca de Python (muestra el porcentaje)."""
+        req = urllib.request.Request(url, headers={"User-Agent": "AutoMix-Instalador"})
+        with self._opener().open(req, timeout=30) as r, open(parcial, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            hecho = 0
+            ultimo = -1
+            while True:
+                if self.cancelado:
+                    raise RuntimeError("cancelado")
+                bloque = r.read(65536)
+                if not bloque:
+                    break
+                f.write(bloque)
+                hecho += len(bloque)
+                if avance:
+                    pct = int(100 * hecho / total) if total else None
+                    if pct != ultimo:                                  # solo cuando cambia el porcentaje (no por cada bloque)
+                        ultimo = pct if pct is not None else -1
+                        avance(pct)
+
+    def _bajar_curl(self, url: str, parcial: Path, avance: Optional[Callable[[Optional[int]], None]]) -> None:
+        """Forma 2: curl.exe (viene con Windows 10/11). Usa el almacén de certificados del sistema y no se frena por la revocación."""
+        exe = shutil.which("curl.exe") or shutil.which("curl")
+        if not exe:
+            raise RuntimeError("curl no está disponible en esta PC")
+        if avance:
+            avance(None)
+        r = self._correr([exe, "-L", "--fail", "--silent", "--show-error", "--retry", "3", "--connect-timeout", "30",
+                          "--ssl-no-revoke", "-o", str(parcial), url])
+        if r.returncode != 0:
+            raise RuntimeError(f"curl terminó con código {r.returncode}: {(r.stdout or '').strip()[-300:]}")
+
+    def _bajar_powershell(self, url: str, parcial: Path, avance: Optional[Callable[[Optional[int]], None]]) -> None:
+        """Forma 3: PowerShell (Invoke-WebRequest con TLS 1.2). Respeta el proxy configurado en Windows."""
+        if os.name != "nt":
+            raise RuntimeError("PowerShell solo se usa en Windows")
+        if avance:
+            avance(None)
+
+        def q(texto: object) -> str:
+            return "'" + str(texto).replace("'", "''") + "'"
+        guion = ("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; "
+                 f"Invoke-WebRequest -UseBasicParsing -UserAgent 'AutoMix-Instalador' -Uri {q(url)} -OutFile {q(parcial)}")
+        r = self._correr(["powershell", "-NoProfile", "-NonInteractive", "-Command", guion])
+        if r.returncode != 0:
+            raise RuntimeError(f"PowerShell terminó con código {r.returncode}: {(r.stdout or '').strip()[-300:]}")
+
     def descargar(self, url: str, destino: Path, avance: Optional[Callable[[Optional[int]], None]] = None) -> None:
-        """Baja `url` a `destino` (archivo .part que se renombra al terminar). avance(porcentaje o None)."""
+        """Baja `url` a `destino` (archivo .part que se renombra al terminar). avance(porcentaje o None).
+        Prueba tres formas (Python, curl, PowerShell): si una está bloqueada en esa PC (certificados, proxy, antivirus), sigue la otra.
+        Si el archivo no existe (404) avisa enseguida. Si fallan las tres, el error cuenta qué pasó con cada una."""
         destino.parent.mkdir(parents=True, exist_ok=True)
         parcial = destino.with_name(destino.name + ".part")
-        req = urllib.request.Request(url, headers={"User-Agent": "AutoMix-Instalador"})
+        fallos: list = []
         try:
-            with self._opener().open(req, timeout=30) as r, open(parcial, "wb") as f:
-                total = int(r.headers.get("Content-Length") or 0)
-                hecho = 0
-                ultimo = -1
-                while True:
+            for nombre, metodo in (("Python", self._bajar_urllib), ("curl", self._bajar_curl), ("PowerShell", self._bajar_powershell)):
+                parcial.unlink(missing_ok=True)
+                try:
+                    metodo(url, parcial, avance)
+                    if not parcial.is_file() or parcial.stat().st_size == 0:
+                        raise RuntimeError("el archivo bajó vacío")
+                    os.replace(parcial, destino)
+                    return
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        raise                                          # no existe: otra forma de bajarlo no lo arregla
+                    fallos.append(f"{nombre}: HTTP {e.code} {e.reason}")
+                except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                     if self.cancelado:
-                        raise RuntimeError("cancelado")
-                    bloque = r.read(65536)
-                    if not bloque:
-                        break
-                    f.write(bloque)
-                    hecho += len(bloque)
-                    if avance:
-                        pct = int(100 * hecho / total) if total else None
-                        if pct != ultimo:                                  # solo cuando cambia el porcentaje (no por cada bloque)
-                            ultimo = pct if pct is not None else -1
-                            avance(pct)
-            os.replace(parcial, destino)
+                        raise RuntimeError("cancelado") from e
+                    fallos.append(f"{nombre}: {e}")
+            raise RuntimeError(f"No se pudo descargar:\n{url}\n\nSe probaron 3 formas y fallaron todas:\n- " + "\n- ".join(fallos) +
+                               "\n\nRevisá que esta PC tenga internet y que el antivirus, el firewall o el proxy no bloqueen la descarga; después tocá Reintentar.")
         finally:
             parcial.unlink(missing_ok=True)
 
@@ -250,6 +300,15 @@ class Instalacion:
         except OSError:
             pass
         return ok, det
+
+    def registrar_error(self, nombre: str, detalle: str) -> None:
+        """Deja el motivo de cada falla en cache\\instalador.log (para poder revisarlo aunque se cierre la ventana)."""
+        try:
+            self.cache.mkdir(parents=True, exist_ok=True)
+            with open(self.cache / "instalador.log", "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  " + nombre + "  ERROR\n" + str(detalle) + "\n\n")
+        except OSError:
+            pass
 
     def reparar_permisos(self) -> None:
         """pip (Python 3.13+) deja los archivos con un permiso restringido que impide leerlos desde un inicio normal.
@@ -494,6 +553,7 @@ class VentanaVerificacion:
                     raise RuntimeError(det or "El paquete se instaló pero no aparece en dependencias_offline.")
         except (OSError, RuntimeError, urllib.error.URLError, zipfile.BadZipFile) as e:
             self.errores[nombre] = str(e)
+            self.inst.registrar_error(nombre, str(e))
             self._ui(lbl, text="❌ Error -- click acá para ver el detalle", fg="#e74c3c")
             return "error"
         self._ui(lbl, text="✅ Instalado", fg="#27ae60")
@@ -524,7 +584,11 @@ class VentanaVerificacion:
             self.inst.registrar_desinstalador()
             self._programar(0, lambda: self._terminar(True, f"✅ Todo listo: {nuevos} instalado(s), {ya} ya estaban."))
         else:
-            self._programar(0, lambda: self._terminar(False, f"❌ Hubo {fallos} error(es): tocá el ❌ para ver el detalle y reintentá."))
+            primero = next(iter(self.errores.items()), None)
+            lineas = [l.strip() for l in (primero[1].splitlines() if primero else []) if l.strip()]
+            causas = [l for l in lineas if l.startswith("- ")][:3] or lineas[:1]
+            motivo = ("\n" + primero[0] + " -- " + " | ".join(c[:90] for c in causas)) if primero and causas else ""
+            self._programar(0, lambda: self._terminar(False, f"❌ Hubo {fallos} error(es): tocá el ❌ para ver el detalle y reintentá.{motivo}"))
 
     def _terminar(self, ok: bool, resumen: str) -> None:
         self._config_seguro(self.lbl_general, text=resumen)
