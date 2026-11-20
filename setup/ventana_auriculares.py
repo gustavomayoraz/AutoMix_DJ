@@ -1,7 +1,7 @@
 """AutoMix — auriculares: botones 🎧 por deck, elección del dispositivo y volumen."""
 import time
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout
+from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 from setup.base import log
 from setup.config import guardar_config, leer_config
 from setup.tema import COLOR_DECK_A, COLOR_DECK_B, TEMA
@@ -28,12 +28,19 @@ class AuricularesMixin:
     def _crear_auriculares(self):
         aur = self.mixer.aur
         cfg = leer_config()
-        self.marco_aur = QFrame()                       # cuadro con degradé violeta, como los decks
-        self.marco_aur.setObjectName("marcoAur")
-        self.marco_aur.setStyleSheet(qss_marco("QFrame#marcoAur", TEMA["violeta"], titulo=False))
-        col = QVBoxLayout(self.marco_aur); col.setContentsMargins(8, 4, 8, 4); col.setSpacing(3)
+        self.marco_aur = QWidget()                      # contenedor transparente con los 2 cuadros: salida principal y auriculares
+        self.marco_aur.setObjectName("contAur")
+        self.marco_aur.setStyleSheet("QWidget#contAur { background:transparent; border:none; }")
+        cont = QVBoxLayout(self.marco_aur); cont.setContentsMargins(0, 0, 0, 0); cont.setSpacing(6)
+        marco_sal = QFrame(); marco_sal.setObjectName("marcoSal")          # cuadro 1 (cian): salida PRINCIPAL
+        marco_sal.setStyleSheet(qss_marco("QFrame#marcoSal", TEMA["cian"], titulo=False))
+        col_sal = QVBoxLayout(marco_sal); col_sal.setContentsMargins(8, 4, 8, 6); col_sal.setSpacing(3)
+        marco_au = QFrame(); marco_au.setObjectName("marcoAur")            # cuadro 2 (violeta): AURICULARES
+        marco_au.setStyleSheet(qss_marco("QFrame#marcoAur", TEMA["violeta"], titulo=False))
+        col = QVBoxLayout(marco_au); col.setContentsMargins(8, 4, 8, 6); col.setSpacing(3)
+        cont.addWidget(marco_sal); cont.addWidget(marco_au)
         fila1 = QHBoxLayout(); fila1.setContentsMargins(0, 0, 0, 0); fila1.setSpacing(4)
-        fila1.addWidget(QLabel("<b>🎧 Auriculares</b>"))
+        fila1.addWidget(self._rotulo("🎧 AURICULARES", "solo para vos", "#c792ff"))
         self.btn_cue = {}                              # (los botones A/B de escucha en vivo se sacaron: se usa el play de abajo)
         fila1.addStretch(1)
         self.btn_aur_ref = QPushButton("🔄")
@@ -69,9 +76,9 @@ class AuricularesMixin:
         self.sld_prev.sliderMoved.connect(self._prev_mover)
         self._prev_act = "A"
         fila_p.addWidget(self.sld_prev, 1)
-        col.addLayout(fila_p)
         self._prev_timer = QTimer(self); self._prev_timer.setInterval(120)
         self._prev_timer.timeout.connect(self._prev_tick)
+        col_sal.addWidget(self._rotulo("🔊 SALIDA PRINCIPAL", "parlantes", "#4dd2ff"))
         self.cmb_sal = _ComboRefresco(self._sal_refrescar)          # salida PRINCIPAL (parlantes): la que se elige acá sale de la lista de auriculares
         self.cmb_sal.setFixedHeight(26)
         self.cmb_sal.setMinimumContentsLength(14)
@@ -84,16 +91,18 @@ class AuricularesMixin:
             self.cmb_sal.addItem(self.mixer.salida_pref, self.mixer.salida_pref)
             self.cmb_sal.setCurrentIndex(1)
         self.cmb_sal.currentIndexChanged.connect(self._sal_cambio)
-        col.addWidget(self.cmb_sal)
+        self._estilo_lista(self.cmb_sal, "#1f4f66", "#4dd2ff")
+        col_sal.addWidget(self.cmb_sal)
         self.cmb_aur = _ComboRefresco(self._aur_refrescar)
         self.cmb_aur.setFixedHeight(26)
         self.cmb_aur.setMinimumContentsLength(14)
         self.cmb_aur.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.cmb_aur.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.cmb_aur.setToolTip("Salida de sonido de los auriculares (por ejemplo tu DAC USB).")
+        self._estilo_lista(self.cmb_aur, "#4a2f73", "#c792ff")
         col.addWidget(self.cmb_aur)
         fila3 = QHBoxLayout(); fila3.setContentsMargins(0, 0, 0, 0); fila3.setSpacing(6)
-        fila3.addWidget(QLabel("🔊"))
+        fila3.addWidget(QLabel("🎧"))
         self.sld_aur = QSlider(Qt.Orientation.Horizontal)
         self.sld_aur.setRange(0, 100); self.sld_aur.setFixedHeight(26)
         self.sld_aur.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -103,6 +112,8 @@ class AuricularesMixin:
         self.sld_aur.valueChanged.connect(self._aur_vol_cambio)
         fila3.addWidget(self.sld_aur, 1); fila3.addWidget(self.lbl_aur)
         col.addLayout(fila3)
+        col.addWidget(self._rotulo("▶ PREVIA", "probar un deck en los auriculares", "#c792ff"))
+        col.addLayout(fila_p)
         self._fila_herr.addWidget(self.marco_aur, 1, 0)
         self._aur_nombre_pref = cfg.get("aur_nombre", "")
         # Arranque rápido: NO se consulta la lista de dispositivos ni se abre la salida ahora (en Windows puede tardar
@@ -112,6 +123,22 @@ class AuricularesMixin:
             self.cmb_aur.addItem(self._aur_nombre_pref, self._aur_nombre_pref)
             self.cmb_aur.setCurrentIndex(1)
         self.cmb_aur.currentIndexChanged.connect(self._aur_dispositivo_cambio)
+
+    @staticmethod
+    def _estilo_lista(cmb, fondo, borde):
+        """Fondo propio para la lista desplegable de un combo, para que no se confunda con el fondo del reproductor."""
+        cmb.view().setStyleSheet(
+            f"QAbstractItemView {{ background:{fondo}; color:#ffffff; border:2px solid {borde}; outline:0px;"
+            f" selection-background-color:{borde}; selection-color:#0b1020; }}"
+            f"QAbstractItemView::item {{ padding:4px 8px; min-height:22px; }}")
+
+    @staticmethod
+    def _rotulo(titulo, aclaracion, color):
+        """Título chico sobre cada lista de salidas, para no confundir la principal con la de auriculares."""
+        lb = QLabel(f"<span style='color:{color}'><b>{titulo}</b></span> <span style='color:#9aa3b5'>· {aclaracion}</span>")
+        lb.setStyleSheet("font-size:12px; background:transparent; border:none; padding:0px; margin:2px 0px 0px 0px;")
+        lb.setTextFormat(Qt.TextFormat.RichText)
+        return lb
 
     _SAL_DEFECTO = "🔊 Principal: la predeterminada de Windows"
 
