@@ -392,6 +392,12 @@ class GlobalMixer:
         self._stream_cayo = False
         self._vig = (self._cb_n, time.monotonic())
         self.stream.start()
+        try:                                              # deja en la consola con qué dispositivo y colchón real quedó abierta la salida
+            _d = sd.query_devices(self.stream.device)
+            _api = sd.query_hostapis(_d["hostapi"])["name"]
+            print(f"[audio] salida principal abierta: {_d['name']} · {_api} · colchón real {self.stream.latency * 1000:.0f} ms (pedido 250 ms) · bloque {self.blocksize}")
+        except Exception:
+            pass
 
     def _al_terminar(self):
         """Lo llama PortAudio cuando la salida se detiene. Solo marca; el trabajo lo hace el vigilante."""

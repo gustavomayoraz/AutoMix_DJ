@@ -153,7 +153,9 @@ class EscalaMixin:
         def _pasada(ultima=False):
             if gen != self._gen_esquina:               # se apretó otra vez: manda la pasada nueva
                 return
-            self._aplicar_escala(self._esc_min())
+            esc = self._esc_min()
+            if ultima or abs(esc - self._esc_actual) > 1e-9:       # si la escala ya es la correcta no se re-aplica a todos los widgets (cada vez trababa la ventana y cortaba el audio)
+                self._aplicar_escala(esc)
             QApplication.processEvents()
             self.layout().activate() if self.layout() is not None else None
             self.resize(self.minimumSizeHint())

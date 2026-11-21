@@ -104,8 +104,30 @@ class Auriculares:
             fin.append((i, v, ch, api))
         return fin
 
+    _pres_cache = None            # última lista leída por el hilo vigía (la consulta a Windows puede tardar varios cientos de ms)
+    _pres_hilo = None
+
     @staticmethod
     def nombres_presentes():
+        """Nombres de las salidas que ve Windows. NO consulta a Windows en el hilo de la ventana (en algunos equipos tarda de
+        0,3 a más de 1 s y trababa la interfaz y el audio): lo lee un hilo aparte cada segundo y esto devuelve lo último leído."""
+        cls = Auriculares
+        if cls._pres_hilo is None:
+            cls._pres_cache = cls._leer_presentes()          # primera vez: una lectura directa para tener un dato inicial
+            def _vigia():
+                import time as _t
+                while True:
+                    _t.sleep(1.0)
+                    try:
+                        cls._pres_cache = cls._leer_presentes()
+                    except Exception:
+                        pass
+            cls._pres_hilo = threading.Thread(target=_vigia, daemon=True, name="vigia-dispositivos")
+            cls._pres_hilo.start()
+        return cls._pres_cache
+
+    @staticmethod
+    def _leer_presentes():
         try:
             import os, ctypes
             if os.name != "nt":
