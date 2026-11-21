@@ -489,10 +489,17 @@ class BibliotecaMixin:
         else:
             self._set_status("⬜ No hay temas tildados por haber sonado" + (f" (los {a_mano} tildados a mano no se tocan)" if a_mano else ""))
 
+    def _lista_reordenada_a_mano(self):
+        """Movió temas arrastrándolos dentro de la lista: ese orden se respeta (no se reordena sola) hasta que se elija otro orden."""
+        if self._modo_orden != "manual":
+            self._modo_orden = "manual"
+            guardar_config(lib_orden="manual")
+        self._set_status("↕ Orden manual: la lista queda como la acomodaste (el botón de ordenar por BPM la vuelve a ordenar)")
+
     def _ordenar_lista(self):
         """Con 🎼 Armónico y/o 🥁 En frase la lista se ordena como cadena de mezcla (empezando por el tema que
         suena); sin ninguna, por BPM de menor a mayor. Con 🎵 Ordenar por estilo activo, no se toca."""
-        if self._modo_orden == "estilo":
+        if self._modo_orden in ("estilo", "manual"):          # 'manual': la acomodaste vos arrastrando; no se pisa hasta que elijas otro orden
             return
         arm, fra = self.chk_armonico.isChecked(), self.chk_frases.isChecked()
         if not (arm or fra):

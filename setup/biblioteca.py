@@ -9,7 +9,7 @@ import stat
 import threading
 import time
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox, QStyledItemDelegate
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QStyleOptionViewItem
 from PySide6.QtCore import QEventLoop, QMimeData, QTimer, QUrl, Qt, Signal
 from setup.ajustes import FUENTE_BOOST, SUPPORTED
@@ -134,6 +134,8 @@ def _carpeta_memo(ruta):
 class Biblioteca(QListWidget):
     aviso = Signal(str)        # mensaje para la barra de estado (p. ej. duplicados omitidos)
     cambio = Signal()
+    saltado = Signal(str)      # el usuario tildó (saltear) un tema a mano: la ruta
+    reordenado = Signal()      # el usuario movió temas a mano (arrastrando dentro de la lista)
     cambio_estadisticas = Signal()        # se marcó o quitó un 👍 desde la lista
     estilo_listo = Signal(object)         # el hilo del orden por estilo terminó: (rutas en orden, cuántas con análisis) o el error
     estilo_progreso = Signal(int, int)    # (temas leídos, total) mientras el hilo lee los análisis
@@ -164,6 +166,7 @@ class Biblioteca(QListWidget):
         self.setWordWrap(False)
         # ----------------------------------------------------------------------------------------------------------
         f = self.font(); f.setPointSize(int(round(9 * FUENTE_BOOST))); self.setFont(f)
+        self._linea_drop = None    # y (en el viewport) de la línea blanca que marca dónde caerá el tema que se está arrastrando
         self._rutas = set()
         self._cola = set()         # temas esperando su análisis (se muestran con ⏳)
         self._precargando = False  # True mientras el hilo de precarga lee los .json: la ventana NO los lee por su cuenta (con miles de temas congelaba todo)
@@ -214,6 +217,8 @@ class Biblioteca(QListWidget):
         self._refrescar_textos()
         self.guardar()
         self.cambio.emit()
+        if skip and k not in self._tocados:            # tildado a mano (no el que se tilda solo por haber sonado)
+            self.saltado.emit(ruta)
 
     def marcar_tocado(self, ruta):
         """El tema sonó más del 50 %: queda tildado (salteado) para que la carga automática no lo repita. Un tema que ya estaba
@@ -1242,20 +1247,91 @@ class Biblioteca(QListWidget):
     def supportedDropActions(self):
         return Qt.DropAction.CopyAction
 
+    # ---------- reordenar arrastrando dentro de la lista (línea blanca = dónde va a quedar) ----------
+    def _dragueando_adentro(self, e):
+        return e.source() is self
+
+    def _destino_drop(self, pos):
+        """Para un arrastre interno: (fila donde se insertaría, y de la línea blanca) o None si ahí no se puede soltar.
+        Con la vista por carpetas solo se puede mover dentro de la misma carpeta (cada tema pertenece a la suya)."""
+        if self._cargando_lib or self._bombeo or self.count() == 0:
+            return None
+        mover = [it for it in self.selectedItems()]
+        if not mover or any(self._es_cab(it) for it in mover):
+            return None
+        it = self.itemAt(pos)
+        if it is None:
+            ult = next((i for i in range(self.count() - 1, -1, -1) if not self.isRowHidden(i)), None)
+            if ult is None:
+                return None
+            r = self.visualItemRect(self.item(ult))
+            if pos.y() < r.top():
+                return None
+            fila, y = ult + 1, r.bottom() + 1
+        else:
+            r = self.visualItemRect(it)
+            fila = self.row(it)
+            if pos.y() >= r.center().y():
+                fila, y = fila + 1, r.bottom() + 1
+            else:
+                y = r.top()
+        if self.agrupado:
+            carpetas = {self._carpeta(i.data(Qt.ItemDataRole.UserRole)) for i in mover}
+            if len(carpetas) != 1 or fila < 1:
+                return None
+            previo = self.item(fila - 1)
+            dueno = previo.data(Qt.ItemDataRole.UserRole) if self._es_cab(previo) else self._carpeta(previo.data(Qt.ItemDataRole.UserRole))
+            if dueno not in carpetas:
+                return None
+        return fila, y
+
+    def _poner_linea(self, y):
+        if y != self._linea_drop:
+            self._linea_drop = y
+            self.viewport().update()
+
     def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls() and e.source() is not self:
+        if self._dragueando_adentro(e):
+            e.acceptProposedAction()
+        elif e.mimeData().hasUrls():
             e.acceptProposedAction()
         else:
             e.ignore()
 
     def dragMoveEvent(self, e):
-        if e.mimeData().hasUrls() and e.source() is not self:
+        if self._dragueando_adentro(e):
+            pos = e.position().toPoint()
+            d = self._destino_drop(pos)
+            if d is None:
+                self._poner_linea(None)
+                e.ignore()
+                return
+            self._poner_linea(d[1])
+            e.acceptProposedAction()
+            barra = self.verticalScrollBar()                       # cerca del borde: la lista se desplaza sola
+            if pos.y() < 28:
+                barra.setValue(barra.value() - 24)
+            elif pos.y() > self.viewport().height() - 28:
+                barra.setValue(barra.value() + 24)
+        elif e.mimeData().hasUrls():
             e.acceptProposedAction()
         else:
             e.ignore()
 
+    def dragLeaveEvent(self, e):
+        self._poner_linea(None)
+        super().dragLeaveEvent(e)
+
     def dropEvent(self, e):
-        if e.source() is self or not e.mimeData().hasUrls():
+        if self._dragueando_adentro(e):
+            d = self._destino_drop(e.position().toPoint())
+            self._poner_linea(None)
+            if d is None:
+                e.ignore(); return
+            e.acceptProposedAction()                                # (acción Copiar: así Qt no borra los temas de origen al terminar)
+            self._mover_temas([it for it in self.selectedItems()], d[0])
+            return
+        if not e.mimeData().hasUrls():
             e.ignore(); return
         rutas = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
         n = self.agregar(rutas)
@@ -1263,6 +1339,33 @@ class Biblioteca(QListWidget):
         r = getattr(self, "ultimo_resumen", None) or {}
         if n == 0 and (r.get("ya_estaban") or r.get("repetidos")):
             QTimer.singleShot(0, lambda: self._avisar_nada_nuevo(rutas, r))      # (fuera del evento de soltar)
+
+    def _mover_temas(self, items, fila):
+        """Saca los temas de donde están y los pone juntos (en su mismo orden) antes de la fila `fila`."""
+        filas = sorted(self.row(it) for it in items)
+        destino = fila - sum(1 for f in filas if f < fila)
+        if filas == list(range(destino, destino + len(filas))):
+            return                                                  # ya estaban ahí
+        barra = self.verticalScrollBar().value()
+        prev = self._cargando
+        self._cargando = True
+        self.setUpdatesEnabled(False)
+        try:
+            sacados = [self.takeItem(f) for f in reversed(filas)]
+            sacados.reverse()
+            for k, it in enumerate(sacados):
+                self.insertItem(destino + k, it)
+            self.clearSelection()
+            for it in sacados:
+                it.setSelected(True)
+        finally:
+            self.setUpdatesEnabled(True)
+            self._cargando = prev
+        self.verticalScrollBar().setValue(barra)
+        if getattr(self, "_ult_pintado", None):
+            self.pintar(*self._ult_pintado)
+        self.reordenado.emit()
+        self.cambio.emit()
 
     def _avisar_nada_nuevo(self, rutas, r):
         """Soltaron una carpeta/temas y no se agregó nada porque ya estaban: se explica claro y se ofrece agregar las copias igual."""
@@ -1293,6 +1396,12 @@ class Biblioteca(QListWidget):
             p.setFont(f); p.setPen(QColor(TEMA["suave"]))
             r = self.viewport().rect().adjusted(16, 0, -16, 0)
             p.drawText(r, int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), "📂\n\nArrastrá carpetas o archivos acá")
+            p.end()
+        if self._linea_drop is not None:                         # línea blanca: dónde va a quedar el tema que se arrastra
+            p = QPainter(self.viewport())
+            p.setPen(QPen(QColor("#ffffff"), 2))
+            y = max(1, min(self._linea_drop, self.viewport().height() - 2))
+            p.drawLine(0, y, self.viewport().width(), y)
             p.end()
 
     def keyPressEvent(self, e):

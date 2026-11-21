@@ -360,6 +360,23 @@ class AutomaticoMixin:
         else:
             self._set_status(f"⚠️ {nombre} está dañado y no se puede cargar (la carga automática y el Random lo van a saltear)")
 
+    def _tema_tildado_a_mano(self, ruta):
+        """Tildaron (saltear) un tema que está cargado y en espera en un deck: con la carga automática se reemplaza por el siguiente
+        que no esté tildado. Si el deck suena, está en pausa a mitad del tema o hay una mezcla en curso, no se toca."""
+        if not self.carga_auto:
+            return
+        for d in (self.deck_a, self.deck_b):
+            if d.path != ruta or d.playing:
+                continue
+            if self.mix_timer.isActive() or self.mix_pausa_timer.isActive():
+                continue
+            try:
+                en_espera = (ruta == self._carga_auto_path) or d.position_virtual_seconds() < 10.0
+            except Exception:
+                en_espera = (ruta == self._carga_auto_path)
+            if en_espera:
+                QTimer.singleShot(0, lambda dk=d, p=ruta: self._cargar_siguiente(dk) if (dk.path == p and not dk.playing) else None)
+
     def _cargar_siguiente(self, destino):
         if not self.carga_auto:
             return

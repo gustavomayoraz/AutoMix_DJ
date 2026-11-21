@@ -174,6 +174,8 @@ class AutoMix(MultibandaMixin, EfectosMixin, LoopMixin, AuricularesMixin, Automa
         lib_lay.addWidget(EtiquetaElidida("Arrastrá un tema a Deck A o B"))
         self.ed_filtro.textChanged.connect(self._filtrar_biblioteca)
         self.biblioteca.cambio.connect(self._biblioteca_cambio)
+        self.biblioteca.reordenado.connect(self._lista_reordenada_a_mano)
+        self.biblioteca.saltado.connect(self._tema_tildado_a_mano)
         self.biblioteca.aviso.connect(self._set_status)
         self.biblioteca.itemDoubleClicked.connect(self._biblioteca_doble_clic)
         split.addWidget(panel_lib)
